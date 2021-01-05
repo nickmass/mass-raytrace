@@ -7,9 +7,12 @@ use super::material::{
 };
 use super::ply_loader::PlyLoader;
 use super::world::{Camera, World};
-use crate::math::{Num, V3};
+use crate::{
+    math::{Num, V3},
+    stl_loader,
+};
 
-pub fn cornell_box<B: Background>(world: &mut World<B>, aspect_ratio: f64) -> Camera {
+pub fn cornell_box<B: Background>(world: &mut World<B>, aspect_ratio: f32) -> Camera {
     let red = Lambertian::new(V3::new(1.0, 0.0, 0.0));
     let green = Lambertian::new(V3::new(0.0, 1.0, 0.0));
     let white = Lambertian::new(V3::new(1.0, 1.0, 1.0));
@@ -90,15 +93,14 @@ pub fn cornell_box<B: Background>(world: &mut World<B>, aspect_ratio: f64) -> Ca
     )
 }
 
-pub fn scratchpad<B: Background>(world: &mut World<B>, aspect_ratio: f64) -> Camera {
-    let mut max = V3::fill(f64::MIN);
-    let mut min = V3::fill(f64::MAX);
-    let scale = V3::fill(4.0 / 1100.0);
-    //let scale = 25.0;
+pub fn scratchpad<B: Background>(world: &mut World<B>, aspect_ratio: f32) -> Camera {
+    let mut max = V3::fill(f32::MIN);
+    let mut min = V3::fill(f32::MAX);
+    let scale = 25.0;
     let list = PlyLoader::load(
-        "lucy.ply",
+        "models/bun_zipper.ply",
         |x, y, z| {
-            let v = V3::new(x, z, y) * scale;
+            let v = V3::new(x, y, z) * scale;
             max = max.max(v);
             min = min.min(v);
             v
@@ -106,23 +108,7 @@ pub fn scratchpad<B: Background>(world: &mut World<B>, aspect_ratio: f64) -> Cam
         |a, b, c| Triangle::new((), a, b, c),
     )
     .unwrap();
-    /*
-    let list = PlyLoader::load(
-        "cube.ply",
-        |x, y, z| {
-            let v = V3::new(x, y, z) * 1.2;
-            max = max.max(v);
-            min = min.min(v);
-            v
-        },
-        |a, b, c| Triangle::new((), a, b, c),
-    )
-    .unwrap();
-    */
 
-    println!("max: {:?}, min: {:?}", max, min);
-
-    let material = Lambertian::new(V3::fill(0.7));
     let model = Model::new((), list);
 
     let mut z = -50.0;
@@ -130,7 +116,7 @@ pub fn scratchpad<B: Background>(world: &mut World<B>, aspect_ratio: f64) -> Cam
     for _ in 0..200 {
         let mut x = -50.0;
         for _ in 0..200 {
-            let color = f64::rand();
+            let color = f32::rand();
             let color = V3::new(color, 1.0, 0.7).hsl_to_rgb();
             match fastrand::u8(0..4) {
                 0 => {
@@ -138,7 +124,7 @@ pub fn scratchpad<B: Background>(world: &mut World<B>, aspect_ratio: f64) -> Cam
                     let instance = model.instance(
                         m,
                         V3::new(x, min.y() * -1.0, z),
-                        V3::new(0.0, f64::rand(), 0.0),
+                        V3::new(0.0, f32::rand(), 0.0),
                         V3::fill(1.0),
                     );
                     world.add(instance);
@@ -148,17 +134,17 @@ pub fn scratchpad<B: Background>(world: &mut World<B>, aspect_ratio: f64) -> Cam
                     let instance = model.instance(
                         m,
                         V3::new(x, min.y() * -1.0, z),
-                        V3::new(0.0, f64::rand(), 0.0),
+                        V3::new(0.0, f32::rand(), 0.0),
                         V3::fill(1.0),
                     );
                     world.add(instance);
                 }
                 2 => {
-                    let m = Metal::new(f64::rand(), color);
+                    let m = Metal::new(f32::rand(), color);
                     let instance = model.instance(
                         m,
                         V3::new(x, min.y() * -1.0, z),
-                        V3::new(0.0, f64::rand(), 0.0),
+                        V3::new(0.0, f32::rand(), 0.0),
                         V3::fill(1.0),
                     );
                     world.add(instance);
@@ -168,7 +154,7 @@ pub fn scratchpad<B: Background>(world: &mut World<B>, aspect_ratio: f64) -> Cam
                     let instance = model.instance(
                         m,
                         V3::new(x, min.y() * -1.0, z),
-                        V3::new(0.0, f64::rand(), 0.0),
+                        V3::new(0.0, f32::rand(), 0.0),
                         V3::fill(1.0),
                     );
                     world.add(instance);
@@ -181,20 +167,10 @@ pub fn scratchpad<B: Background>(world: &mut World<B>, aspect_ratio: f64) -> Cam
         z += 5.0;
     }
 
-    /*
-    let instance = model.instance(
-        material,
-        V3::fill(0.0),
-        V3::fill(0.0),
-        V3::new(7.0, 1.2, 1.0),
-    );
-    world.add(instance);
-    */
-
-    let look_from = V3::new(-40.0, 7.5, -40.0);
+    let look_from = V3::new(-55.0, 15.0, -55.0);
     let look_at = V3::new(0.0, 1.0, 0.0);
     let focus_distance = (look_from - look_at).length();
-    let aperture = 0.03;
+    let aperture = 0.2;
 
     Camera::new(
         37.0,
@@ -216,17 +192,13 @@ pub fn dark_world() -> World<SolidBackground> {
 
     let material_ground = Lambertian::new(V3::fill(0.1));
 
-    let world_sphere = Sphere::new(
-        material_ground,
-        V3::new(0.0, -100000000.0001, 0.0),
-        100000000.0,
-    );
+    let world_sphere = Sphere::new(material_ground, V3::new(0.0, -10000.0001, 0.0), 10000.0);
     world.add(world_sphere);
 
     let sun_sphere = Sphere::new(
         DiffuseLight::new(V3::new(2.0, 2.0, 2.0)),
-        V3::new(100000100.0, 0.0, 100000100.0),
-        100000000.0,
+        V3::new(1100.0, 0.0, 1100.0),
+        1000.0,
     );
     world.add(sun_sphere);
 
@@ -237,12 +209,9 @@ pub fn bright_world() -> World<SkyBackground> {
     let mut world = World::new(SkyBackground);
 
     let material_ground = Lambertian::new(V3::fill(0.1));
+    let material_ground = Metal::new(0.01, V3::fill(0.3));
 
-    let world_sphere = Sphere::new(
-        material_ground,
-        V3::new(0.0, -100000000.0001, 0.0),
-        100000000.0,
-    );
+    let world_sphere = Sphere::new(material_ground, V3::new(0.0, -100000.000000, 0.0), 100000.0);
     world.add(world_sphere);
 
     world

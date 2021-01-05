@@ -9,20 +9,20 @@ pub struct Camera {
     vertical: V3,
     u: V3,
     v: V3,
-    lens_radius: f64,
+    lens_radius: f32,
 }
 
 impl Camera {
     pub fn new(
-        vertical_fov: f64,
+        vertical_fov: f32,
         look_from: V3,
         look_at: V3,
         view_up: V3,
-        aspect_ratio: f64,
-        aperture: f64,
-        focus_distance: f64,
+        aspect_ratio: f32,
+        aperture: f32,
+        focus_distance: f32,
     ) -> Self {
-        let vertical_fov_rads = vertical_fov * std::f64::consts::PI / 180.0;
+        let vertical_fov_rads = vertical_fov * std::f32::consts::PI / 180.0;
         let half_height = (vertical_fov_rads / 2.0).tan();
         let viewport_height = half_height * 2.0;
         let viewport_width = aspect_ratio * viewport_height;
@@ -50,7 +50,7 @@ impl Camera {
         }
     }
 
-    pub fn ray(&self, s: f64, t: f64) -> Ray {
+    pub fn ray(&self, s: f32, t: f32) -> Ray {
         let blur = V3::random_in_unit_disk() * self.lens_radius;
         let offset = self.u * blur.x() + self.v * blur.y();
 
@@ -65,7 +65,7 @@ impl Camera {
     pub fn trace<I: Intersect + Background>(&self, scene: &I, ray: Ray, depth: i32) -> (V3, i32) {
         if depth <= 0 {
             (V3::zero(), depth)
-        } else if let Some(hit) = scene.intersect(ray, 0.001, f64::INFINITY) {
+        } else if let Some(hit) = scene.intersect(ray, 0.001, f32::INFINITY) {
             let emitted = hit.emit();
             if let Some(scatter) = hit.scatter(ray) {
                 let result = self.trace(scene, scatter.scattered, depth - 1);
@@ -116,7 +116,7 @@ impl<B: Background> Background for World<B> {
 }
 
 impl<B: Background> Intersect for World<B> {
-    fn intersect(&self, ray: Ray, t_min: f64, t_max: f64) -> Option<Hit> {
+    fn intersect(&self, ray: Ray, t_min: f32, t_max: f32) -> Option<Hit> {
         let mut found_hit = None;
         let mut closest_so_far = t_max;
 
@@ -163,7 +163,7 @@ impl Ray {
         Self { origin, direction }
     }
 
-    pub fn at(&self, t: f64) -> V3 {
+    pub fn at(&self, t: f32) -> V3 {
         self.origin + (self.direction * t)
     }
 }

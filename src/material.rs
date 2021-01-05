@@ -97,12 +97,12 @@ impl Material for DiffuseLight {
 
 #[derive(Copy, Clone)]
 pub struct Metal {
-    fuzz: f64,
+    fuzz: f32,
     albedo: V3,
 }
 
 impl Metal {
-    pub fn new(fuzz: f64, albedo: V3) -> Self {
+    pub fn new(fuzz: f32, albedo: V3) -> Self {
         let fuzz = if fuzz < 1.0 { fuzz } else { 1.0 };
         Self { fuzz, albedo }
     }
@@ -129,15 +129,15 @@ impl Material for Metal {
 
 #[derive(Copy, Clone, Debug)]
 pub struct Dielectric {
-    refraction_index: f64,
+    refraction_index: f32,
 }
 
 impl Dielectric {
-    pub fn new(refraction_index: f64) -> Self {
+    pub fn new(refraction_index: f32) -> Self {
         Self { refraction_index }
     }
 
-    fn reflectance(cosine: f64, ref_idx: f64) -> f64 {
+    fn reflectance(cosine: f32, ref_idx: f32) -> f32 {
         let r0 = ((1.0 - ref_idx) / (1.0 + ref_idx)).powi(2);
         r0 + (1.0 - r0) * (1.0 - cosine).powi(5)
     }
@@ -159,7 +159,7 @@ impl Material for Dielectric {
         let cannot_refract = refraction_ratio * sin_theta > 1.0;
 
         let direction =
-            if cannot_refract || Self::reflectance(cos_theta, refraction_ratio) > f64::rand() {
+            if cannot_refract || Self::reflectance(cos_theta, refraction_ratio) > f32::rand() {
                 unit_direction.reflect(hit.normal)
             } else {
                 unit_direction.refract(hit.normal, refraction_ratio)
@@ -174,12 +174,12 @@ impl Material for Dielectric {
 
 #[derive(Copy, Clone)]
 pub struct Specular {
-    refraction_index: f64,
+    refraction_index: f32,
     inner: Lambertian,
 }
 
 impl Specular {
-    pub fn new(refraction_index: f64, albedo: V3) -> Self {
+    pub fn new(refraction_index: f32, albedo: V3) -> Self {
         let mat = Lambertian::new(albedo);
         Self {
             refraction_index,
@@ -187,7 +187,7 @@ impl Specular {
         }
     }
 
-    fn reflectance(cosine: f64, ref_idx: f64) -> f64 {
+    fn reflectance(cosine: f32, ref_idx: f32) -> f32 {
         let r0 = ((1.0 - ref_idx) / (1.0 + ref_idx)).powi(2);
         r0 + (1.0 - r0) * (1.0 - cosine).powi(5)
     }
@@ -209,7 +209,7 @@ impl Material for Specular {
         let cannot_refract = refraction_ratio * sin_theta > 1.0;
 
         let direction =
-            if cannot_refract || Self::reflectance(cos_theta, refraction_ratio) > f64::rand() {
+            if cannot_refract || Self::reflectance(cos_theta, refraction_ratio) > f32::rand() {
                 unit_direction.reflect(hit.normal)
             } else {
                 return self.inner.scatter(ray, hit);

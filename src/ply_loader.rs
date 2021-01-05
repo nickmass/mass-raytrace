@@ -65,11 +65,11 @@ impl Format {
         Ok(value)
     }
 
-    fn read_f64<R: Read>(
+    fn read_f32<R: Read>(
         &self,
         reader: &mut R,
         kind: DataType,
-    ) -> Result<f64, Box<dyn std::error::Error>> {
+    ) -> Result<f32, Box<dyn std::error::Error>> {
         let value = match self {
             Format::Ascii => {
                 let mut buf = [0u8; 1];
@@ -86,24 +86,24 @@ impl Format {
                 word.parse()?
             }
             Format::BinaryLE => match kind {
-                DataType::Char => reader.read_i8()? as f64,
-                DataType::UChar => reader.read_u8()? as f64,
-                DataType::Short => reader.read_i16::<LittleEndian>()? as f64,
-                DataType::UShort => reader.read_u16::<LittleEndian>()? as f64,
-                DataType::Int => reader.read_i32::<LittleEndian>()? as f64,
-                DataType::UInt => reader.read_u32::<LittleEndian>()? as f64,
-                DataType::Float => reader.read_f32::<LittleEndian>()? as f64,
-                DataType::Double => reader.read_f64::<LittleEndian>()? as f64,
+                DataType::Char => reader.read_i8()? as f32,
+                DataType::UChar => reader.read_u8()? as f32,
+                DataType::Short => reader.read_i16::<LittleEndian>()? as f32,
+                DataType::UShort => reader.read_u16::<LittleEndian>()? as f32,
+                DataType::Int => reader.read_i32::<LittleEndian>()? as f32,
+                DataType::UInt => reader.read_u32::<LittleEndian>()? as f32,
+                DataType::Float => reader.read_f32::<LittleEndian>()? as f32,
+                DataType::Double => reader.read_f64::<LittleEndian>()? as f32,
             },
             Format::BinaryBE => match kind {
-                DataType::Char => reader.read_i8()? as f64,
-                DataType::UChar => reader.read_u8()? as f64,
-                DataType::Short => reader.read_i16::<BigEndian>()? as f64,
-                DataType::UShort => reader.read_u16::<BigEndian>()? as f64,
-                DataType::Int => reader.read_i32::<BigEndian>()? as f64,
-                DataType::UInt => reader.read_u32::<BigEndian>()? as f64,
-                DataType::Float => reader.read_f32::<BigEndian>()? as f64,
-                DataType::Double => reader.read_f64::<BigEndian>()? as f64,
+                DataType::Char => reader.read_i8()? as f32,
+                DataType::UChar => reader.read_u8()? as f32,
+                DataType::Short => reader.read_i16::<BigEndian>()? as f32,
+                DataType::UShort => reader.read_u16::<BigEndian>()? as f32,
+                DataType::Int => reader.read_i32::<BigEndian>()? as f32,
+                DataType::UInt => reader.read_u32::<BigEndian>()? as f32,
+                DataType::Float => reader.read_f32::<BigEndian>()? as f32,
+                DataType::Double => reader.read_f64::<BigEndian>()? as f32,
             },
         };
 
@@ -267,12 +267,12 @@ enum Property {
     List(String, DataType, DataType),
 }
 
-pub struct PlyLoader {}
+pub struct PlyLoader;
 
 impl PlyLoader {
     pub fn load<
         P: AsRef<Path>,
-        FV: FnMut(f64, f64, f64) -> V,
+        FV: FnMut(f32, f32, f32) -> V,
         FF: FnMut(V, V, V) -> F,
         V: Copy,
         F,
@@ -377,13 +377,13 @@ impl PlyLoader {
                     match prop {
                         Property::Field(name, kind) => match (is_vertex, name.as_str()) {
                             (true, "x") => {
-                                x = Some(ply_description.format.read_f64(&mut reader, *kind)?);
+                                x = Some(ply_description.format.read_f32(&mut reader, *kind)?);
                             }
                             (true, "y") => {
-                                y = Some(ply_description.format.read_f64(&mut reader, *kind)?);
+                                y = Some(ply_description.format.read_f32(&mut reader, *kind)?);
                             }
                             (true, "z") => {
-                                z = Some(ply_description.format.read_f64(&mut reader, *kind)?);
+                                z = Some(ply_description.format.read_f32(&mut reader, *kind)?);
                             }
                             _ => {
                                 ply_description.format.skip(&mut reader, *kind)?;

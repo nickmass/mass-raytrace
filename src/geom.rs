@@ -7,7 +7,7 @@ use crate::math::{M4, V3};
 pub struct Hit<'a> {
     pub point: V3,
     pub normal: V3,
-    pub t: f64,
+    pub t: f32,
     pub front_face: bool,
     pub material: &'a dyn Material,
 }
@@ -27,23 +27,23 @@ impl<'a> Hit<'a> {
     }
 
     pub fn emit(&self) -> V3 {
-        self.material.emit(&self).unwrap_or(V3::fill(0.0))
+        self.material.emit(&self).unwrap_or(V3::zero())
     }
 }
 
 pub trait Intersect: Send + Sync {
-    fn intersect(&self, ray: Ray, t_min: f64, t_max: f64) -> Option<Hit<'_>>;
+    fn intersect(&self, ray: Ray, t_min: f32, t_max: f32) -> Option<Hit<'_>>;
     fn bounding_box(&self) -> Option<BoundingBox>;
 }
 
 pub struct Sphere<M: Material> {
     center: V3,
-    radius: f64,
+    radius: f32,
     material: M,
 }
 
 impl<M: Material> Sphere<M> {
-    pub fn new(material: M, center: V3, radius: f64) -> Self {
+    pub fn new(material: M, center: V3, radius: f32) -> Self {
         Self {
             center,
             radius,
@@ -53,7 +53,7 @@ impl<M: Material> Sphere<M> {
 }
 
 impl<M: Material> Intersect for Sphere<M> {
-    fn intersect(&self, ray: Ray, t_min: f64, t_max: f64) -> Option<Hit<'_>> {
+    fn intersect(&self, ray: Ray, t_min: f32, t_max: f32) -> Option<Hit<'_>> {
         let offset_center = ray.origin - self.center;
         let a = ray.direction.length_squared();
         let half_b = offset_center.dot(&ray.direction);
@@ -181,7 +181,7 @@ fn compare_z(left: &Box<dyn Intersect>, right: &Box<dyn Intersect>) -> bool {
 }
 
 impl Intersect for BvhNode {
-    fn intersect(&self, ray: Ray, t_min: f64, t_max: f64) -> Option<Hit<'_>> {
+    fn intersect(&self, ray: Ray, t_min: f32, t_max: f32) -> Option<Hit<'_>> {
         if self.bounding_box.hit(ray, t_min, t_max) {
             let left_hit = self
                 .left
@@ -213,7 +213,7 @@ impl BoundingBox {
         Self { minimum, maximum }
     }
 
-    pub fn hit(&self, ray: Ray, t_min: f64, t_max: f64) -> bool {
+    pub fn hit(&self, ray: Ray, t_min: f32, t_max: f32) -> bool {
         let v_min = (self.minimum - ray.origin) / ray.direction;
         let v_max = (self.maximum - ray.origin) / ray.direction;
 
@@ -310,7 +310,7 @@ impl<M: 'static + Clone + Material> Model<M> {
 }
 
 impl<M: Material> Intersect for Model<M> {
-    fn intersect(&self, ray: Ray, t_min: f64, t_max: f64) -> Option<Hit<'_>> {
+    fn intersect(&self, ray: Ray, t_min: f32, t_max: f32) -> Option<Hit<'_>> {
         let hit = self.triangles.intersect(ray, t_min, t_max);
         if let Some(mut hit) = hit {
             hit.material = &self.material;
@@ -359,8 +359,8 @@ impl<M: Material> Instance<M> {
         let transform = translation * scale * rotation;
         let ray_transform = ray_rotation * ray_scale * ray_translation;
 
-        let mut minimum = V3::fill(f64::INFINITY);
-        let mut maximum = V3::fill(f64::NEG_INFINITY);
+        let mut minimum = V3::fill(f32::INFINITY);
+        let mut maximum = V3::fill(f32::NEG_INFINITY);
 
         for corner in triangles.bounding_box.corners().map(|c| transform * c) {
             minimum = minimum.min(corner);
@@ -382,7 +382,7 @@ impl<M: Material> Instance<M> {
 }
 
 impl<M: Material> Intersect for Instance<M> {
-    fn intersect(&self, ray: Ray, t_min: f64, t_max: f64) -> Option<Hit<'_>> {
+    fn intersect(&self, ray: Ray, t_min: f32, t_max: f32) -> Option<Hit<'_>> {
         let ray = Ray::new(
             self.ray_transform * ray.origin,
             self.ray_rotation * ray.direction,
@@ -422,15 +422,15 @@ impl<M: Material> Triangle<M> {
 }
 
 impl<M: Material> Intersect for Triangle<M> {
-    fn intersect(&self, ray: Ray, t_min: f64, t_max: f64) -> Option<Hit<'_>> {
+    fn intersect(&self, ray: Ray, t_min: f32, t_max: f32) -> Option<Hit<'_>> {
         let ab = self.vertex_b - self.vertex_a;
         let ac = self.vertex_c - self.vertex_a;
-        let normal = ab.cross(&ac).unit();
+        let normal = ac.cross(&ab).unit();
 
         let p_vec = ray.direction.cross(&ac);
         let det = ab.dot(&p_vec);
 
-        if det.abs() < f64::EPSILON * 2.0 {
+        if det.abs() < f32::EPSILON * 2.0 {
             return None;
         }
 

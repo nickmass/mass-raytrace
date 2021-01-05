@@ -21,6 +21,7 @@ mod geom;
 mod material;
 mod ply_loader;
 mod scenes;
+mod stl_loader;
 mod world;
 
 #[derive(Debug)]
@@ -30,10 +31,10 @@ enum UserEvent {
 
 const MAX_DEPTH: i32 = 250;
 
-const ASPECT_RATIO: f64 = 16.0 / 9.0;
+const ASPECT_RATIO: f32 = 16.0 / 9.0;
 
 const IMAGE_WIDTH: u32 = 1920 * 2;
-const IMAGE_HEIGHT: u32 = (IMAGE_WIDTH as f64 / ASPECT_RATIO) as u32;
+const IMAGE_HEIGHT: u32 = (IMAGE_WIDTH as f32 / ASPECT_RATIO) as u32;
 
 fn main() {
     fastrand::seed(1);
@@ -78,16 +79,19 @@ fn render<B: 'static + material::Background>(
 
         builder
             .spawn(move || loop {
+                let frame_start = std::time::Instant::now();
                 for y in 0..image.height {
                     for x in 0..image.width {
-                        let u = (x as f64 + f64::rand()) / ((image.width - 1) as f64);
-                        let v = (y as f64 + f64::rand()) / ((image.height - 1) as f64);
+                        let u = (x as f32 + f32::rand()) / ((image.width - 1) as f32);
+                        let v = (y as f32 + f32::rand()) / ((image.height - 1) as f32);
                         let ray = camera.ray(u, v);
                         let (color, depth) = camera.trace(&*world, ray, MAX_DEPTH);
 
                         buffer.set((x, y), color, MAX_DEPTH - depth);
                     }
                 }
+
+                println!("Frame time: {} seconds", frame_start.elapsed().as_secs());
 
                 image.merge(&mut buffer);
                 event_proxy
@@ -205,10 +209,7 @@ impl ImageBuffer {
 
     fn set(&mut self, position: (u32, u32), color: V3, depth: i32) {
         let index = ((position.1 * self.width) + position.0) as usize;
-        self.pixels[index] = (
-            (color.x() as f32, color.y() as f32, color.z() as f32),
-            depth.max(0) as u32,
-        );
+        self.pixels[index] = ((color.x(), color.y(), color.z()), depth.max(0) as u32);
     }
 }
 
@@ -236,7 +237,7 @@ impl Image {
         for (&(buf_color, buf_depth), (image_color, image_depth)) in
             buffer.pixels.iter().zip(pixels.1.iter_mut())
         {
-            *image_color += V3::new(buf_color.0 as f64, buf_color.1 as f64, buf_color.2 as f64);
+            *image_color += V3::new(buf_color.0, buf_color.1, buf_color.2);
             *image_depth = (*image_depth).max(buf_depth);
         }
         pixels.0 += 1;
@@ -255,13 +256,13 @@ impl Image {
             pixel_bytes
         } else {
             let mut pixel_bytes = Vec::with_capacity(pixels.1.len() * 4);
-            let scale = 1.0 / pixels.0 as f64;
-            let component = |f_c: f64| ((scale * f_c).sqrt().min(1.0).max(0.0) * 255.0) as u8;
+            let scale = 1.0 / pixels.0 as f32;
+            let component = |f_c: f32| ((scale * f_c).sqrt().min(1.0).max(0.0) * 255.0) as u8;
 
             if show_depth {
                 let max_depth = pixels.1.iter().map(|p| p.1).max().unwrap_or(1).max(1);
                 for (_color, depth) in pixels.1.iter() {
-                    let depth = ((*depth as f64 / max_depth as f64) * 255.0) as u8;
+                    let depth = ((*depth as f32 / max_depth as f32) * 255.0) as u8;
                     pixel_bytes.push(depth);
                     pixel_bytes.push(depth);
                     pixel_bytes.push(depth);

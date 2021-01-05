@@ -7,9 +7,9 @@ pub type V3 = simd::V3;
 pub type M4 = simd::M4;
 
 #[cfg(not(feature = "simd"))]
-pub type V3 = generic::V3<f64>;
+pub type V3 = generic::V3<f32>;
 #[cfg(not(feature = "simd"))]
-pub type M4 = generic::M4<f64>;
+pub type M4 = generic::M4<f32>;
 
 pub trait Num:
     Mul<Output = Self> + Add<Output = Self> + Div<Output = Self> + Sub<Output = Self> + Copy
@@ -123,12 +123,12 @@ pub mod generic {
         }
     }
 
-    impl V3<f64> {
+    impl V3<f32> {
         pub fn random_in_unit_sphere() -> Self {
             loop {
-                let x = f64::rand() * 2.0 - 1.0;
-                let y = f64::rand() * 2.0 - 1.0;
-                let z = f64::rand() * 2.0 - 1.0;
+                let x = f32::rand() * 2.0 - 1.0;
+                let y = f32::rand() * 2.0 - 1.0;
+                let z = f32::rand() * 2.0 - 1.0;
 
                 let v = V3::new(x, y, z);
                 if v.length_squared() >= 1.0 {
@@ -140,8 +140,8 @@ pub mod generic {
 
         pub fn random_in_unit_disk() -> Self {
             loop {
-                let x = f64::rand() * 2.0 - 1.0;
-                let y = f64::rand() * 2.0 - 1.0;
+                let x = f32::rand() * 2.0 - 1.0;
+                let y = f32::rand() * 2.0 - 1.0;
 
                 let v = V3::new(x, y, 0.0);
                 if v.length_squared() >= 1.0 {
@@ -156,16 +156,16 @@ pub mod generic {
         }
 
         pub fn near_zero(&self) -> bool {
-            self.x.abs() <= 3.0 * f64::EPSILON
-                && self.y.abs() <= 3.0 * f64::EPSILON
-                && self.z.abs() <= 3.0 * f64::EPSILON
+            self.x.abs() <= 3.0 * f32::EPSILON
+                && self.y.abs() <= 3.0 * f32::EPSILON
+                && self.z.abs() <= 3.0 * f32::EPSILON
         }
 
         pub fn reflect(&self, normal: Self) -> Self {
             *self - (normal * self.dot(&normal) * 2.0)
         }
 
-        pub fn refract(&self, normal: Self, etai_over_etat: f64) -> Self {
+        pub fn refract(&self, normal: Self, etai_over_etat: f32) -> Self {
             let cos_theta = self.neg().dot(&normal).min(1.0);
             let r_out_perp = (*self + normal * cos_theta) * etai_over_etat;
             let r_out_parallel = normal * (1.0 - r_out_perp.length_squared()).abs().sqrt().neg();
@@ -419,10 +419,6 @@ pub mod generic {
         pub c3: V4<T>,
     }
 
-    fn m4<T>(c0: V4<T>, c1: V4<T>, c2: V4<T>, c3: V4<T>) -> M4<T> {
-        M4::new(c0, c1, c2, c3)
-    }
-
     impl<T> M4<T> {
         pub fn new(c0: V4<T>, c1: V4<T>, c2: V4<T>, c3: V4<T>) -> M4<T> {
             M4 { c0, c1, c2, c3 }
@@ -438,8 +434,17 @@ pub mod generic {
         }
     }
 
-    impl M4<f64> {
-        pub fn translation(translate: V3<f64>) -> Self {
+    impl M4<f32> {
+        pub fn identity() -> Self {
+            Self::new(
+                V4::new(1.0, 0.0, 0.0, 0.0),
+                V4::new(0.0, 1.0, 0.0, 0.0),
+                V4::new(0.0, 0.0, 1.0, 0.0),
+                V4::new(0.0, 0.0, 0.0, 1.0),
+            )
+        }
+
+        pub fn translation(translate: V3<f32>) -> Self {
             M4::new(
                 V4::new(1.0, 0.0, 0.0, 0.0),
                 V4::new(0.0, 1.0, 0.0, 0.0),
@@ -448,8 +453,8 @@ pub mod generic {
             )
         }
 
-        pub fn rotation(rotate: V3<f64>) -> Self {
-            let rotate = rotate * std::f64::consts::PI * 2.0;
+        pub fn rotation(rotate: V3<f32>) -> Self {
+            let rotate = rotate * std::f32::consts::PI * 2.0;
             let (sin_x, cos_x) = rotate.x().sin_cos();
             let (sin_y, cos_y) = rotate.y().sin_cos();
             let (sin_z, cos_z) = rotate.z().sin_cos();
@@ -476,7 +481,7 @@ pub mod generic {
             rotation_x * rotation_y * rotation_z
         }
 
-        pub fn scale(scale: V3<f64>) -> Self {
+        pub fn scale(scale: V3<f32>) -> Self {
             M4::new(
                 V4::new(scale.x(), 0.0, 0.0, 0.0),
                 V4::new(0.0, scale.y(), 0.0, 0.0),
@@ -493,17 +498,6 @@ pub mod generic {
                 self.c1.clone(),
                 self.c2.clone(),
                 self.c3.clone(),
-            )
-        }
-    }
-
-    impl M4<f64> {
-        pub fn identity() -> Self {
-            Self::new(
-                V4::new(1.0, 0.0, 0.0, 0.0),
-                V4::new(0.0, 1.0, 0.0, 0.0),
-                V4::new(0.0, 0.0, 1.0, 0.0),
-                V4::new(0.0, 0.0, 0.0, 1.0),
             )
         }
     }
@@ -543,10 +537,10 @@ pub mod generic {
         }
     }
 
-    impl Mul<V3<f64>> for M4<f64> {
-        type Output = V3<f64>;
+    impl Mul<V3<f32>> for M4<f32> {
+        type Output = V3<f32>;
 
-        fn mul(self, rhs: V3<f64>) -> Self::Output {
+        fn mul(self, rhs: V3<f32>) -> Self::Output {
             let m = self;
             let vx = m.c0 * rhs.x;
             let vy = m.c1 * rhs.y;
@@ -581,58 +575,58 @@ pub mod generic {
 
 #[cfg(feature = "simd")]
 mod simd {
-    use packed_simd::{f64x4, shuffle};
+    use packed_simd::{f32x4, shuffle};
     use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
     use super::Num;
 
     #[derive(Copy, Clone, Debug)]
     pub struct V3 {
-        inner: f64x4,
+        inner: f32x4,
     }
 
     impl V3 {
-        pub fn new(x: f64, y: f64, z: f64) -> Self {
+        pub fn new(x: f32, y: f32, z: f32) -> Self {
             Self {
-                inner: f64x4::new(x, y, z, 1.0),
+                inner: f32x4::new(x, y, z, 1.0),
             }
         }
 
-        pub fn fill(v: f64) -> Self {
+        pub fn fill(v: f32) -> Self {
             Self {
-                inner: f64x4::splat(v),
+                inner: f32x4::splat(v),
             }
         }
 
         pub fn zero() -> Self {
             Self {
-                inner: f64x4::splat(0.0),
+                inner: f32x4::splat(0.0),
             }
         }
 
-        pub fn x(&self) -> f64 {
+        pub fn x(&self) -> f32 {
             unsafe { self.inner.extract_unchecked(0) }
         }
 
-        pub fn y(&self) -> f64 {
+        pub fn y(&self) -> f32 {
             unsafe { self.inner.extract_unchecked(1) }
         }
 
-        pub fn z(&self) -> f64 {
+        pub fn z(&self) -> f32 {
             unsafe { self.inner.extract_unchecked(2) }
         }
 
         pub fn rand() -> Self {
-            Self::new(f64::rand(), f64::rand(), f64::rand())
+            Self::new(f32::rand(), f32::rand(), f32::rand())
         }
 
-        pub fn length_squared(&self) -> f64 {
+        pub fn length_squared(&self) -> f32 {
             let x = self.inner * self.inner;
             let x = unsafe { x.replace_unchecked(3, 0.0) };
             x.sum()
         }
 
-        pub fn length(&self) -> f64 {
+        pub fn length(&self) -> f32 {
             self.length_squared().sqrt()
         }
 
@@ -640,17 +634,17 @@ mod simd {
             *self / self.length()
         }
 
-        pub fn dot(&self, other: &Self) -> f64 {
+        pub fn dot(&self, other: &Self) -> f32 {
             let x = self.inner * other.inner;
             let x = unsafe { x.replace_unchecked(3, 0.0) };
             x.sum()
         }
 
         pub fn cross(&self, other: &Self) -> Self {
-            let x0: f64x4 = shuffle!(self.inner, [1, 2, 0, 3]);
-            let x1: f64x4 = shuffle!(self.inner, [2, 0, 1, 3]);
-            let y0: f64x4 = shuffle!(other.inner, [2, 0, 1, 3]);
-            let y1: f64x4 = shuffle!(other.inner, [1, 2, 0, 3]);
+            let x0: f32x4 = shuffle!(self.inner, [1, 2, 0, 3]);
+            let x1: f32x4 = shuffle!(self.inner, [2, 0, 1, 3]);
+            let y0: f32x4 = shuffle!(other.inner, [2, 0, 1, 3]);
+            let y1: f32x4 = shuffle!(other.inner, [1, 2, 0, 3]);
 
             Self {
                 inner: (x0 * y0) - (x1 * y1),
@@ -659,9 +653,9 @@ mod simd {
 
         pub fn random_in_unit_sphere() -> Self {
             loop {
-                let x = f64::rand() * 2.0 - 1.0;
-                let y = f64::rand() * 2.0 - 1.0;
-                let z = f64::rand() * 2.0 - 1.0;
+                let x = f32::rand() * 2.0 - 1.0;
+                let y = f32::rand() * 2.0 - 1.0;
+                let z = f32::rand() * 2.0 - 1.0;
 
                 let v = V3::new(x, y, z);
                 if v.length_squared() >= 1.0 {
@@ -673,8 +667,8 @@ mod simd {
 
         pub fn random_in_unit_disk() -> Self {
             loop {
-                let x = f64::rand() * 2.0 - 1.0;
-                let y = f64::rand() * 2.0 - 1.0;
+                let x = f32::rand() * 2.0 - 1.0;
+                let y = f32::rand() * 2.0 - 1.0;
 
                 let v = V3::new(x, y, 0.0);
                 if v.length_squared() >= 1.0 {
@@ -689,16 +683,16 @@ mod simd {
         }
 
         pub fn near_zero(&self) -> bool {
-            self.x().abs() <= 3.0 * f64::EPSILON
-                && self.y().abs() <= 3.0 * f64::EPSILON
-                && self.z().abs() <= 3.0 * f64::EPSILON
+            self.x().abs() <= 3.0 * f32::EPSILON
+                && self.y().abs() <= 3.0 * f32::EPSILON
+                && self.z().abs() <= 3.0 * f32::EPSILON
         }
 
         pub fn reflect(&self, normal: Self) -> Self {
             *self - (normal * self.dot(&normal) * 2.0)
         }
 
-        pub fn refract(&self, normal: Self, etai_over_etat: f64) -> Self {
+        pub fn refract(&self, normal: Self, etai_over_etat: f32) -> Self {
             let cos_theta = self.neg().dot(&normal).min(1.0);
             let r_out_perp = (*self + normal * cos_theta) * etai_over_etat;
             let r_out_parallel = normal * (1.0 - r_out_perp.length_squared()).abs().sqrt().neg();
@@ -737,66 +731,66 @@ mod simd {
         }
     }
 
-    impl Add<f64> for V3 {
+    impl Add<f32> for V3 {
         type Output = Self;
 
-        fn add(self, rhs: f64) -> Self::Output {
+        fn add(self, rhs: f32) -> Self::Output {
             Self {
                 inner: self.inner + rhs,
             }
         }
     }
 
-    impl AddAssign<f64> for V3 {
-        fn add_assign(&mut self, rhs: f64) {
+    impl AddAssign<f32> for V3 {
+        fn add_assign(&mut self, rhs: f32) {
             self.inner += rhs;
         }
     }
 
-    impl Sub<f64> for V3 {
+    impl Sub<f32> for V3 {
         type Output = Self;
 
-        fn sub(self, rhs: f64) -> Self::Output {
+        fn sub(self, rhs: f32) -> Self::Output {
             Self {
                 inner: self.inner - rhs,
             }
         }
     }
 
-    impl SubAssign<f64> for V3 {
-        fn sub_assign(&mut self, rhs: f64) {
+    impl SubAssign<f32> for V3 {
+        fn sub_assign(&mut self, rhs: f32) {
             self.inner -= rhs;
         }
     }
 
-    impl Mul<f64> for V3 {
+    impl Mul<f32> for V3 {
         type Output = Self;
 
-        fn mul(self, rhs: f64) -> Self::Output {
+        fn mul(self, rhs: f32) -> Self::Output {
             Self {
                 inner: self.inner * rhs,
             }
         }
     }
 
-    impl MulAssign<f64> for V3 {
-        fn mul_assign(&mut self, rhs: f64) {
+    impl MulAssign<f32> for V3 {
+        fn mul_assign(&mut self, rhs: f32) {
             self.inner *= rhs
         }
     }
 
-    impl Div<f64> for V3 {
+    impl Div<f32> for V3 {
         type Output = Self;
 
-        fn div(self, rhs: f64) -> Self::Output {
+        fn div(self, rhs: f32) -> Self::Output {
             Self {
                 inner: self.inner / rhs,
             }
         }
     }
 
-    impl DivAssign<f64> for V3 {
-        fn div_assign(&mut self, rhs: f64) {
+    impl DivAssign<f32> for V3 {
+        fn div_assign(&mut self, rhs: f32) {
             self.inner /= rhs;
         }
     }
@@ -879,14 +873,14 @@ mod simd {
 
     #[derive(Copy, Clone, Debug)]
     pub struct M4 {
-        c0: f64x4,
-        c1: f64x4,
-        c2: f64x4,
-        c3: f64x4,
+        c0: f32x4,
+        c1: f32x4,
+        c2: f32x4,
+        c3: f32x4,
     }
 
     impl M4 {
-        pub fn new<T: Into<[f64; 4]>>(c0: T, c1: T, c2: T, c3: T) -> Self {
+        pub fn new<T: Into<[f32; 4]>>(c0: T, c1: T, c2: T, c3: T) -> Self {
             let c0 = c0.into().into();
             let c1 = c1.into().into();
             let c2 = c2.into().into();
@@ -896,24 +890,24 @@ mod simd {
         }
 
         pub fn transpose(self) -> Self {
-            let a0: [f64; 4] = self.c0.into();
-            let a1: [f64; 4] = self.c1.into();
-            let a2: [f64; 4] = self.c2.into();
-            let a3: [f64; 4] = self.c3.into();
+            let a0: [f32; 4] = self.c0.into();
+            let a1: [f32; 4] = self.c1.into();
+            let a2: [f32; 4] = self.c2.into();
+            let a3: [f32; 4] = self.c3.into();
 
-            let c0 = f64x4::new(a0[0], a1[0], a2[0], a3[0]);
-            let c1 = f64x4::new(a0[1], a1[1], a2[1], a3[1]);
-            let c2 = f64x4::new(a0[2], a1[2], a2[2], a3[2]);
-            let c3 = f64x4::new(a0[3], a1[3], a2[3], a3[3]);
+            let c0 = f32x4::new(a0[0], a1[0], a2[0], a3[0]);
+            let c1 = f32x4::new(a0[1], a1[1], a2[1], a3[1]);
+            let c2 = f32x4::new(a0[2], a1[2], a2[2], a3[2]);
+            let c3 = f32x4::new(a0[3], a1[3], a2[3], a3[3]);
 
             Self { c0, c1, c2, c3 }
         }
 
         pub fn identity() -> Self {
-            let c0 = f64x4::new(1.0, 0.0, 0.0, 0.0);
-            let c1 = f64x4::new(0.0, 1.0, 0.0, 0.0);
-            let c2 = f64x4::new(0.0, 0.0, 1.0, 0.0);
-            let c3 = f64x4::new(0.0, 0.0, 0.0, 1.0);
+            let c0 = f32x4::new(1.0, 0.0, 0.0, 0.0);
+            let c1 = f32x4::new(0.0, 1.0, 0.0, 0.0);
+            let c2 = f32x4::new(0.0, 0.0, 1.0, 0.0);
+            let c3 = f32x4::new(0.0, 0.0, 0.0, 1.0);
             Self { c0, c1, c2, c3 }
         }
 
@@ -927,7 +921,7 @@ mod simd {
         }
 
         pub fn rotation(rotate: V3) -> Self {
-            let rotate = rotate * std::f64::consts::PI * 2.0;
+            let rotate = rotate * std::f32::consts::PI * 2.0;
             let (sin_x, cos_x) = rotate.x().sin_cos();
             let (sin_y, cos_y) = rotate.y().sin_cos();
             let (sin_z, cos_z) = rotate.z().sin_cos();
@@ -991,10 +985,10 @@ mod simd {
             let c33 = (m.c3 * rhs.c3).sum();
 
             Self {
-                c0: f64x4::new(c00, c01, c02, c03),
-                c1: f64x4::new(c10, c11, c12, c13),
-                c2: f64x4::new(c20, c21, c22, c23),
-                c3: f64x4::new(c30, c31, c32, c33),
+                c0: f32x4::new(c00, c01, c02, c03),
+                c1: f32x4::new(c10, c11, c12, c13),
+                c2: f32x4::new(c20, c21, c22, c23),
+                c3: f32x4::new(c30, c31, c32, c33),
             }
         }
     }
