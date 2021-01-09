@@ -28,8 +28,8 @@ impl Camera {
         let viewport_width = aspect_ratio * viewport_height;
 
         let w = (look_from - look_at).unit();
-        let u = view_up.cross(&w).unit();
-        let v = w.cross(&u);
+        let u = view_up.cross(w).unit();
+        let v = w.cross(u);
 
         let origin = look_from;
         let horizontal = u * viewport_width * focus_distance;
@@ -68,8 +68,8 @@ impl Camera {
         } else if let Some(hit) = scene.intersect(ray, 0.001, f32::INFINITY) {
             let emitted = hit.emit();
             if let Some(scatter) = hit.scatter(ray) {
-                let result = self.trace(scene, scatter.scattered, depth - 1);
-                ((result.0 * scatter.attenuation + emitted), result.1)
+                let (color, depth) = self.trace(scene, scatter.scattered, depth - 1);
+                ((color * scatter.attenuation + emitted), depth)
             } else {
                 (emitted, depth)
             }

@@ -2,11 +2,12 @@ use std::sync::Arc;
 
 use super::material::{Material, Scatter};
 use super::world::Ray;
-use crate::math::{M4, V3};
+use crate::math::{M4, V2, V3};
 
 pub struct Hit<'a> {
     pub point: V3,
     pub normal: V3,
+    pub uv: Option<V2>,
     pub t: f32,
     pub front_face: bool,
     pub material: &'a dyn Material,
@@ -14,7 +15,7 @@ pub struct Hit<'a> {
 
 impl<'a> Hit<'a> {
     pub fn set_face_normal(&mut self, ray: Ray, outward_normal: V3) {
-        self.front_face = ray.direction.dot(&outward_normal) < 0.0;
+        self.front_face = ray.direction.dot(outward_normal) < 0.0;
         self.normal = if self.front_face {
             outward_normal
         } else {
@@ -56,7 +57,7 @@ impl<M: Material> Intersect for Sphere<M> {
     fn intersect(&self, ray: Ray, t_min: f32, t_max: f32) -> Option<Hit<'_>> {
         let offset_center = ray.origin - self.center;
         let a = ray.direction.length_squared();
-        let half_b = offset_center.dot(&ray.direction);
+        let half_b = offset_center.dot(ray.direction);
         let c = offset_center.length_squared() - (self.radius * self.radius);
         let discriminant = (half_b * half_b) - (a * c);
 
@@ -80,6 +81,7 @@ impl<M: Material> Intersect for Sphere<M> {
                 point,
                 normal,
                 t: root,
+                uv: None,
                 front_face: false,
                 material: &self.material,
             };
@@ -351,7 +353,7 @@ impl<M: Material> Instance<M> {
         let ray_translation = M4::translation(ray_translation);
 
         let rotation = M4::rotation(rotation);
-        let ray_rotation = M4::rotation(ray_rotation);
+        let ray_rotation = M4::rotation_rev(ray_rotation);
 
         let scale = M4::scale(scale);
         let ray_scale = M4::scale(ray_scale);
@@ -403,20 +405,72 @@ impl<M: Material> Intersect for Instance<M> {
     }
 }
 
+struct UV {
+    uv_a: V2,
+    uv_b: V2,
+    uv_c: V2,
+}
+
 pub struct Triangle<M: Material> {
     vertex_a: V3,
     vertex_b: V3,
     vertex_c: V3,
+    uvs: Option<UV>,
     material: M,
+    normal_a: V3,
+    normal_b: V3,
+    normal_c: V3,
+    tangent: V3,
+    bitangent: V3,
 }
 
 impl<M: Material> Triangle<M> {
     pub fn new(material: M, vertex_a: V3, vertex_b: V3, vertex_c: V3) -> Self {
+        let ab = vertex_b - vertex_a;
+        let ac = vertex_c - vertex_a;
+        let normal = ab.cross(ac).unit();
+
         Self {
             material,
             vertex_a,
             vertex_b,
             vertex_c,
+            uvs: None,
+            normal_a: normal,
+            normal_b: normal,
+            normal_c: normal,
+            tangent: V3::zero(),
+            bitangent: V3::zero(),
+        }
+    }
+
+    pub fn with_norms_and_uvs(
+        material: M,
+        (vertex_a, normal_a, uv_a): (V3, V3, V2),
+        (vertex_b, normal_b, uv_b): (V3, V3, V2),
+        (vertex_c, normal_c, uv_c): (V3, V3, V2),
+    ) -> Self {
+        let ab = vertex_b - vertex_a;
+        let ac = vertex_c - vertex_a;
+        let uv_ab = uv_b - uv_a;
+        let uv_ac = uv_c - uv_a;
+        let r = (1.0 / (uv_ab.x() * uv_ac.y() - uv_ab.y() * uv_ac.x()))
+            .min(1.0)
+            .max(-1.0);
+        let tangent = (ab * uv_ac.y() - ac * uv_ab.y()) * r;
+        let bitangent = (ac * uv_ab.x() - ab * uv_ac.x()) * r;
+
+        Self {
+            material,
+            vertex_a,
+            vertex_b,
+            vertex_c,
+            uvs: Some(UV { uv_a, uv_b, uv_c }),
+            normal_a,
+            normal_b,
+            normal_c,
+            tangent,
+            bitangent,
         }
     }
 }
@@ -425,10 +479,9 @@ impl<M: Material> Intersect for Triangle<M> {
     fn intersect(&self, ray: Ray, t_min: f32, t_max: f32) -> Option<Hit<'_>> {
         let ab = self.vertex_b - self.vertex_a;
         let ac = self.vertex_c - self.vertex_a;
-        let normal = ac.cross(&ab).unit();
 
-        let p_vec = ray.direction.cross(&ac);
-        let det = ab.dot(&p_vec);
+        let p_vec = ray.direction.cross(ac);
+        let det = ab.dot(p_vec);
 
         if det.abs() < f32::EPSILON * 2.0 {
             return None;
@@ -437,18 +490,18 @@ impl<M: Material> Intersect for Triangle<M> {
         let inv_det = 1.0 / det;
 
         let t_vec = ray.origin - self.vertex_a;
-        let u = t_vec.dot(&p_vec) * inv_det;
+        let u = t_vec.dot(p_vec) * inv_det;
         if u < 0.0 || u > 1.0 {
             return None;
         }
 
-        let q_vec = t_vec.cross(&ab);
-        let v = ray.direction.dot(&q_vec) * inv_det;
+        let q_vec = t_vec.cross(ab);
+        let v = ray.direction.dot(q_vec) * inv_det;
         if v < 0.0 || v + u > 1.0 {
             return None;
         }
 
-        let t = ac.dot(&q_vec) * inv_det;
+        let t = ac.dot(q_vec) * inv_det;
 
         if t < t_min || t > t_max {
             return None;
@@ -456,10 +509,42 @@ impl<M: Material> Intersect for Triangle<M> {
 
         let point = ray.at(t);
 
+        let d0 = self.vertex_a - point;
+        let d1 = self.vertex_b - point;
+        let d2 = self.vertex_c - point;
+
+        let area = (self.vertex_a - self.vertex_b)
+            .cross(self.vertex_a - self.vertex_c)
+            .length();
+
+        let a0 = d1.cross(d2).length() / area;
+        let a1 = d2.cross(d0).length() / area;
+        let a2 = d0.cross(d1).length() / area;
+
+        let normal = self.normal_a * a0 + self.normal_b * a1 + self.normal_c * a2;
+
+        let (normal, uv) = if let Some(uvs) = &self.uvs {
+            let uv = uvs.uv_a * a0 + uvs.uv_b * a1 + uvs.uv_c * a2;
+
+            let normal = if let Some(tan_normal) = self.material.normal(uv) {
+                (self.tangent * tan_normal.x()
+                    + self.bitangent * tan_normal.y()
+                    + normal * tan_normal.z())
+                .unit()
+            } else {
+                normal
+            };
+
+            (normal, Some(uv))
+        } else {
+            (normal, None)
+        };
+
         let mut hit = Hit {
             point,
             normal,
             t,
+            uv,
             front_face: false,
             material: &self.material,
         };

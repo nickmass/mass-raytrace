@@ -17,11 +17,14 @@ use std::sync::{Arc, Mutex};
 mod math;
 use math::{Num, V3};
 
+mod eve;
 mod geom;
 mod material;
+mod obj_loader;
 mod ply_loader;
 mod scenes;
 mod stl_loader;
+mod texture;
 mod world;
 
 #[derive(Debug)]
@@ -36,24 +39,53 @@ const ASPECT_RATIO: f32 = 16.0 / 9.0;
 const IMAGE_WIDTH: u32 = 1920 * 2;
 const IMAGE_HEIGHT: u32 = (IMAGE_WIDTH as f32 / ASPECT_RATIO) as u32;
 
+const ANIMATING: bool = false;
+
 fn main() {
     fastrand::seed(1);
 
-    let mut world = scenes::empty_world();
-    let camera = scenes::cornell_box(&mut world, ASPECT_RATIO);
+    let mut frame = 40;
 
-    world.build_bvh();
+    let frame_rate = 24;
+    let seconds = 5;
+    let total_frames = frame_rate * seconds;
+    let samples_per_frame = if ANIMATING { Some(10) } else { None };
 
-    let event_loop: EventLoop<UserEvent> = EventLoop::with_user_event();
-    let image = Arc::new(Image::new(IMAGE_WIDTH, IMAGE_HEIGHT));
+    let start_time = std::time::Instant::now();
 
-    {
-        let image = image.clone();
-        let proxy = Arc::new(Mutex::new(event_loop.create_proxy()));
-        render(image, proxy, world, camera);
+    while frame < total_frames {
+        let animation_t = frame as f32 / total_frames as f32;
+        let (mut world, camera) = scenes::cornell_box(animation_t, ASPECT_RATIO);
+
+        world.build_bvh();
+
+        let event_loop: EventLoop<UserEvent> = EventLoop::with_user_event();
+        let image = Arc::new(Image::new(IMAGE_WIDTH, IMAGE_HEIGHT));
+
+        {
+            let image = image.clone();
+            let proxy = Arc::new(Mutex::new(event_loop.create_proxy()));
+            render(image, proxy, world, camera, samples_per_frame);
+        }
+
+        if ANIMATING {
+            image.dump(format!("animation/frame_{:03}.png", frame));
+        } else {
+            run(event_loop, image)
+        }
+        frame += 1;
+
+        let elapsed_s = start_time.elapsed().as_secs() as f32;
+        let complete = frame as f32 / total_frames as f32;
+        let total_s = (1.0 / complete) * elapsed_s;
+        let remaining_s = total_s - elapsed_s;
+        println!(
+            "Animation: {:.2}%  ~{:.1} minutes remaining, {:.1} minutes elapsed.",
+            complete * 100.0,
+            remaining_s / 60.0,
+            elapsed_s / 60.0
+        )
     }
-
-    run(event_loop, image)
 }
 
 fn render<B: 'static + material::Background>(
@@ -61,46 +93,71 @@ fn render<B: 'static + material::Background>(
     event_proxy: Arc<Mutex<EventLoopProxy<UserEvent>>>,
     world: world::World<B>,
     camera: world::Camera,
+    frame_limit: Option<usize>,
 ) {
     let world = Arc::new(world);
     let camera = Arc::new(camera);
     let cpus = num_cpus::get() as i32;
     let cpus = (cpus - 2).max(1);
+
+    let mut handles = Vec::new();
     for i in 0..cpus {
         let event_proxy = event_proxy.clone();
         let world = world.clone();
         let camera = camera.clone();
         let image = image.clone();
         let mut buffer = image.buffer();
+        let mut first = true;
+
+        let mut frame_limit = frame_limit.clone();
 
         let builder = std::thread::Builder::new()
             .name(format!("render:{}", i))
             .stack_size(32 * 1024 * 1024);
 
-        builder
-            .spawn(move || loop {
-                let frame_start = std::time::Instant::now();
-                for y in 0..image.height {
-                    for x in 0..image.width {
-                        let u = (x as f32 + f32::rand()) / ((image.width - 1) as f32);
-                        let v = (y as f32 + f32::rand()) / ((image.height - 1) as f32);
-                        let ray = camera.ray(u, v);
-                        let (color, depth) = camera.trace(&*world, ray, MAX_DEPTH);
+        let handle = builder
+            .spawn(move || {
+                while frame_limit.is_none() || frame_limit != Some(0) {
+                    let frame_start = std::time::Instant::now();
+                    for y in 0..image.height {
+                        if i == 0 && first && frame_limit.is_none() {
+                            println!("{:.2}%", y as f64 / image.height as f64 * 100.0);
+                        }
+                        for x in 0..image.width {
+                            let u = (x as f32 + f32::rand()) / ((image.width - 1) as f32);
+                            let v = (y as f32 + f32::rand()) / ((image.height - 1) as f32);
+                            let ray = camera.ray(u, v);
+                            let (color, depth) = camera.trace(&*world, ray, MAX_DEPTH);
 
-                        buffer.set((x, y), color, MAX_DEPTH - depth);
+                            buffer.set((x, y), color, MAX_DEPTH - depth);
+                        }
                     }
+
+                    first = false;
+
+                    if frame_limit.is_none() || i == 0 {
+                        println!("Frame time: {} seconds", frame_start.elapsed().as_secs());
+                    }
+
+                    image.merge(&mut buffer);
+                    event_proxy
+                        .lock()
+                        .expect("Event proxy posioned")
+                        .send_event(UserEvent::Update)
+                        .expect("Unable to reach event loop");
+
+                    frame_limit.as_mut().map(|n| *n -= 1);
                 }
-
-                println!("Frame time: {} seconds", frame_start.elapsed().as_secs());
-
-                image.merge(&mut buffer);
-                event_proxy
-                    .lock()
-                    .expect("Event proxy posioned")
-                    .send_event(UserEvent::Update)
-                    .expect("Unable to reach event loop");
             })
             .expect("Unable to spawn render thread");
+
+        handles.push(handle);
+    }
+
+    if frame_limit.is_some() {
+        for handle in handles {
+            handle.join().unwrap();
+        }
     }
 }
 

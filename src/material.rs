@@ -2,7 +2,10 @@ use std::ops::Neg;
 
 use super::geom::Hit;
 use super::world::Ray;
-use crate::math::{Num, V3};
+use crate::{
+    math::{Num, M4, V2, V3},
+    texture::Surface,
+};
 
 pub struct Scatter {
     pub attenuation: V3,
@@ -12,6 +15,9 @@ pub struct Scatter {
 pub trait Material: Send + Sync {
     fn scatter(&self, ray: Ray, hit: &Hit) -> Option<Scatter>;
     fn emit(&self, _hit: &Hit) -> Option<V3> {
+        None
+    }
+    fn normal(&self, _uv: V2) -> Option<V3> {
         None
     }
 }
@@ -46,6 +52,128 @@ impl Background for SkyBackground {
     }
 }
 
+pub struct SkySphere<S: Surface> {
+    texture: S,
+}
+
+impl<S: Surface> SkySphere<S> {
+    pub fn new(texture: S) -> Self {
+        Self { texture }
+    }
+}
+
+impl<S: Surface> Background for SkySphere<S> {
+    fn background(&self, ray: Ray) -> V3 {
+        let p = ray.direction.unit();
+        let theta = (p.y()).acos();
+        let phi = (p.z() * -1.0).atan2(p.x()) + std::f32::consts::PI;
+
+        let uv = V2::new(
+            phi / (2.0 * std::f32::consts::PI),
+            theta / std::f32::consts::PI,
+        );
+
+        let pixel = self.texture.get_f(uv);
+        V3::new(pixel.x(), pixel.y(), pixel.z())
+    }
+}
+
+pub struct CubeMap<S: Surface> {
+    x_pos: S,
+    x_neg: S,
+    y_pos: S,
+    y_neg: S,
+    z_pos: S,
+    z_neg: S,
+    transform: M4,
+}
+
+impl<S: Surface> CubeMap<S> {
+    pub fn new(x_pos: S, x_neg: S, y_pos: S, y_neg: S, z_pos: S, z_neg: S, rotation: V3) -> Self {
+        let transform = M4::rotation(rotation);
+        Self {
+            x_pos,
+            x_neg,
+            y_pos,
+            y_neg,
+            z_pos,
+            z_neg,
+            transform,
+        }
+    }
+}
+
+impl<S: Surface> Background for CubeMap<S> {
+    fn background(&self, ray: Ray) -> V3 {
+        let p = self.transform * ray.direction.unit();
+
+        let abs_p = V3::new(p.x().abs(), p.y().abs(), p.z().abs());
+
+        let is_x_pos = p.x() > 0.0;
+        let is_y_pos = p.y() > 0.0;
+        let is_z_pos = p.z() > 0.0;
+
+        let is_x_large = abs_p.x() >= abs_p.y() && abs_p.x() >= abs_p.z();
+        let is_y_large = abs_p.y() >= abs_p.x() && abs_p.y() >= abs_p.z();
+        let is_z_large = abs_p.z() >= abs_p.x() && abs_p.z() >= abs_p.y();
+
+        let mut index = 0;
+        let mut max_axis = 0.0;
+
+        let mut u = 0.0;
+        let mut v = 0.0;
+
+        if is_x_large {
+            if is_x_pos {
+                index = 0;
+                u = p.z() * -1.0;
+                v = p.y();
+            } else {
+                index = 1;
+                u = p.z();
+                v = p.y();
+            }
+            max_axis = abs_p.x();
+        } else if is_y_large {
+            if is_y_pos {
+                index = 3;
+                u = p.x();
+                v = p.z() * -1.0;
+            } else {
+                index = 2;
+                u = p.x();
+                v = p.z();
+            }
+            max_axis = abs_p.y();
+        } else if is_z_large {
+            if is_z_pos {
+                index = 4;
+                u = p.x();
+                v = p.y();
+            } else {
+                index = 5;
+                u = p.x() * -1.0;
+                v = p.y();
+            }
+            max_axis = abs_p.z();
+        }
+
+        let uv = V2::new(0.5 * (u / max_axis + 1.0), 0.5 * (v / max_axis + 1.0));
+
+        let color = match index {
+            0 => self.x_pos.get_f(uv),
+            1 => self.x_neg.get_f(uv),
+            2 => self.y_pos.get_f(uv),
+            3 => self.y_neg.get_f(uv),
+            4 => self.z_pos.get_f(uv),
+            5 => self.z_neg.get_f(uv),
+            _ => unreachable!(),
+        };
+
+        V3::new(color.x(), color.y(), color.z())
+    }
+}
+
 #[derive(Copy, Clone)]
 pub struct Lambertian {
     albedo: V3,
@@ -65,6 +193,7 @@ impl Material for Lambertian {
         } else {
             scatter_direction
         };
+
         let scattered = Ray::new(hit.point, scatter_direction);
 
         Some(Scatter {
@@ -116,7 +245,7 @@ impl Material for Metal {
             reflected + (V3::random_in_unit_sphere() * self.fuzz),
         );
 
-        if scattered.direction.dot(&hit.normal) > 0.0 {
+        if scattered.direction.dot(hit.normal) > 0.0 {
             Some(Scatter {
                 scattered,
                 attenuation: self.albedo,
@@ -153,7 +282,7 @@ impl Material for Dielectric {
         };
 
         let unit_direction = ray.direction.unit();
-        let cos_theta = unit_direction.neg().dot(&hit.normal).min(1.0);
+        let cos_theta = unit_direction.neg().dot(hit.normal).min(1.0);
         let sin_theta = (1.0 - cos_theta * cos_theta).sqrt();
 
         let cannot_refract = refraction_ratio * sin_theta > 1.0;
@@ -203,7 +332,7 @@ impl Material for Specular {
         };
 
         let unit_direction = ray.direction.unit();
-        let cos_theta = unit_direction.neg().dot(&hit.normal).min(1.0);
+        let cos_theta = unit_direction.neg().dot(hit.normal).min(1.0);
         let sin_theta = (1.0 - cos_theta * cos_theta).sqrt();
 
         let cannot_refract = refraction_ratio * sin_theta > 1.0;
@@ -225,5 +354,34 @@ impl Material for Specular {
 impl Material for () {
     fn scatter(&self, _ray: Ray, _hit: &Hit) -> Option<Scatter> {
         None
+    }
+}
+
+pub struct Mix<MLeft: Material, MRight: Material> {
+    ratio: f32,
+    left: MLeft,
+    right: MRight,
+}
+
+impl<MLeft: Material, MRight: Material> Mix<MLeft, MRight> {
+    pub fn new(ratio: f32, left: MLeft, right: MRight) -> Self {
+        Self { ratio, left, right }
+    }
+}
+impl<MLeft: Material, MRight: Material> Material for Mix<MLeft, MRight> {
+    fn scatter(&self, ray: Ray, hit: &Hit) -> Option<Scatter> {
+        if f32::rand() < self.ratio {
+            self.left.scatter(ray, hit)
+        } else {
+            self.right.scatter(ray, hit)
+        }
+    }
+
+    fn emit(&self, hit: &Hit) -> Option<V3> {
+        if f32::rand() < self.ratio {
+            self.left.emit(hit)
+        } else {
+            self.right.emit(hit)
+        }
     }
 }
