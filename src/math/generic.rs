@@ -36,11 +36,35 @@ impl V3<F> {
     pub fn powf(&self, pow: f32) -> Self {
         Self::new(self.x.powf(pow), self.y.powf(pow), self.z.powf(pow))
     }
+
+    pub fn abs(&self) -> Self {
+        Self::new(self.x.abs(), self.y.abs(), self.z.abs())
+    }
 }
 
 impl<T: Mul<Output = T> + Add<Output = T> + Copy> V4<T> {
     fn dot(&self, other: Self) -> T {
         self.x * other.x + self.y * other.y + self.z * other.z + self.w * other.w
+    }
+}
+
+impl V4<F> {
+    pub fn min(&self, other: Self) -> Self {
+        Self::new(
+            self.x.min(other.x),
+            self.y.min(other.y),
+            self.z.min(other.z),
+            self.w.min(other.w),
+        )
+    }
+
+    pub fn max(&self, other: Self) -> Self {
+        Self::new(
+            self.x.max(other.x),
+            self.y.max(other.y),
+            self.z.max(other.z),
+            self.w.max(other.w),
+        )
     }
 }
 
@@ -53,12 +77,7 @@ pub struct M4<T> {
 }
 
 impl<T> M4<T> {
-    pub fn new<V: Into<V4<T>>>(c0: V, c1: V, c2: V, c3: V) -> Self {
-        let c0 = c0.into();
-        let c1 = c1.into();
-        let c2 = c2.into();
-        let c3 = c3.into();
-
+    pub const fn new(c0: V4<T>, c1: V4<T>, c2: V4<T>, c3: V4<T>) -> Self {
         M4 { c0, c1, c2, c3 }
     }
 
@@ -80,6 +99,27 @@ impl<T: Clone> Clone for M4<T> {
             self.c2.clone(),
             self.c3.clone(),
         )
+    }
+}
+
+impl M4<F> {
+    fn transform(self, rhs: V3<F>, w: F) -> V3<F> {
+        let vx = self.c0 * rhs.x;
+        let vy = self.c1 * rhs.y;
+        let vz = self.c2 * rhs.z;
+        let vw = self.c3 * w;
+
+        let v = vx + vy + vz + vw;
+
+        V3::new(v.x, v.y, v.z)
+    }
+
+    pub fn transform_vector(self, rhs: V3<F>) -> V3<F> {
+        self.transform(rhs, 0.0)
+    }
+
+    pub fn transform_point(self, rhs: V3<F>) -> V3<F> {
+        self.transform(rhs, 1.0)
     }
 }
 
@@ -115,23 +155,6 @@ impl Mul for M4<F> {
             V4::new(c20, c21, c22, c23),
             V4::new(c30, c31, c32, c33),
         )
-    }
-}
-
-impl Mul<V3<F>> for M4<F> {
-    type Output = V3<F>;
-
-    fn mul(self, rhs: V3<F>) -> Self::Output {
-        let m = self;
-        let vx = m.c0 * rhs.x;
-        let vy = m.c1 * rhs.y;
-        let vz = m.c2 * rhs.z;
-        let vw = m.c3 * 1.0;
-
-        let v = vx + vy + vz + vw;
-        let v = v / v.w;
-
-        V3::new(v.x, v.y, v.z)
     }
 }
 
@@ -195,6 +218,28 @@ macro_rules! implement_vector{
             }
         }
 
+        impl $op<$name<f32>> for f32 {
+            type Output = $name<f32>;
+
+            #[inline(always)]
+            fn $func(self, other: $name<f32>) -> Self::Output {
+                $name {
+                    $($field: self.$func(other.$field),)*
+                }
+            }
+        }
+
+        impl $op<$name<f64>> for f64 {
+            type Output = $name<f64>;
+
+            #[inline(always)]
+            fn $func(self, other: $name<f64>) -> Self::Output {
+                $name {
+                    $($field: self.$func(other.$field),)*
+                }
+            }
+        }
+
         impl<T: $op<Output = T> + Clone> $op_assign for $name<T> {
             #[inline(always)]
             fn $func_assign(&mut self, other: Self) {
@@ -237,17 +282,9 @@ macro_rules! implement_vector{
         }
 
         impl<T> $name<T> {
-            pub fn new($($field: T,)*) -> Self {
+            pub const fn new($($field: T,)*) -> Self {
                 $name {
                     $($field,)*
-                }
-            }
-        }
-
-        impl<T: Num> $name<T> {
-            pub fn zero() -> Self {
-                $name {
-                    $($field: T::ZERO,)*
                 }
             }
         }

@@ -5,6 +5,7 @@ use std::fs::File;
 use std::io::BufReader;
 use std::ops::Index;
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::math::{M4, V2, V3, V4};
 
@@ -15,6 +16,9 @@ pub trait Surface: Send + Sync {
     fn get_f(&self, index: V2) -> V4;
 }
 
+type SharedTexture = Arc<Texture>;
+
+#[derive(Debug, Clone)]
 pub struct Texture {
     width: u32,
     height: u32,
@@ -33,7 +37,7 @@ impl Texture {
         let width = image.width();
         let height = image.height();
 
-        let normalize_component = |c| c as f32 / 255 as f32;
+        let normalize_component = |c| c as f32 / 255.0;
 
         let mut pixels = Vec::new();
 
@@ -57,6 +61,10 @@ impl Texture {
             height,
             pixels,
         })
+    }
+
+    pub fn shared(self) -> SharedTexture {
+        Arc::new(self)
     }
 }
 
@@ -105,10 +113,34 @@ impl Surface for Texture {
     }
 }
 
+impl Surface for SharedTexture {
+    fn width(&self) -> u32 {
+        Texture::width(self)
+    }
+
+    fn height(&self) -> u32 {
+        Texture::height(self)
+    }
+
+    fn get_f(&self, index: V2) -> V4 {
+        Texture::get_f(self, index)
+    }
+}
+
+const KR: f32 = 0.2126;
+const KG: f32 = 0.7152;
+const KB: f32 = 0.0722;
+
+const YUV_TRANSFORM: M4 = M4::new(
+    V4::new(1.0, 1.0, 1.0, 0.0),
+    V4::new(0.0, -(KB / KG) * (2.0 - 2.0 * KB), 2.0 - 2.0 * KB, 0.0),
+    V4::new(2.0 - 2.0 * KR, -(KR / KG) * (2.0 - 2.0 * KR), 0.0, 0.0),
+    V4::new(0.0, 0.0, 0.0, 1.0),
+);
+
 pub struct YCbCrTexture {
     luma: Texture,
     chroma: Texture,
-    yuv_transform: M4,
 }
 
 impl YCbCrTexture {
@@ -119,22 +151,7 @@ impl YCbCrTexture {
         let luma = Texture::load_png(luma)?;
         let chroma = Texture::load_png(chroma)?;
 
-        let kr = 0.299;
-        let kg = 0.587;
-        let kb = 0.114;
-
-        let yuv_transform = M4::new(
-            [1.0, 1.0, 1.0, 0.0],
-            [0.0, -(kb / kg) * (2.0 - 2.0 * kb), (2.0 - 2.0 * kb), 0.0],
-            [2.0 - 2.0 * kr, -(kr / kg) * (2.0 - 2.0 * kr), 0.0, 0.0],
-            [0.0, 0.0, 0.0, 1.0],
-        );
-
-        Ok(Self {
-            luma,
-            chroma,
-            yuv_transform,
-        })
+        Ok(Self { luma, chroma })
     }
 }
 
@@ -148,16 +165,70 @@ impl Surface for YCbCrTexture {
     }
 
     fn get_f(&self, index: V2) -> V4 {
-        let luma = self.luma.get_f(index).x();
+        let luma = self.luma.get_f(index);
         let chroma = self.chroma.get_f(index);
 
-        let yuv = V3::new(luma, chroma.x() - 0.5, chroma.y() - 0.5);
+        let yuv = V3::new(luma.x(), chroma.x() - 0.5, chroma.y() - 0.5);
 
-        let color = (self.yuv_transform * yuv)
+        let color = YUV_TRANSFORM
+            .transform_point(yuv)
             .min(V3::fill(1.0))
             .max(V3::fill(0.0))
             .powf(2.2);
 
-        V4::new(color.x(), color.y(), color.z(), 1.0)
+        color.expand(1.0)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum BlendMode {
+    Lighten,
+    Darken,
+    Addition,
+    Subtraction,
+}
+
+impl BlendMode {
+    fn blend(&self, left: V4, right: V4) -> V4 {
+        match self {
+            BlendMode::Lighten => left.max(right),
+            BlendMode::Darken => left.min(right),
+            BlendMode::Addition => (left + right).min(V4::one()),
+            BlendMode::Subtraction => (left - right).max(V4::zero()),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TextureBlend<L: Surface, R: Surface> {
+    blend_mode: BlendMode,
+    left: L,
+    right: R,
+}
+
+impl<L: Surface, R: Surface> TextureBlend<L, R> {
+    pub fn new(blend_mode: BlendMode, left: L, right: R) -> Self {
+        Self {
+            blend_mode,
+            left,
+            right,
+        }
+    }
+}
+
+impl<L: Surface, R: Surface> Surface for TextureBlend<L, R> {
+    fn width(&self) -> u32 {
+        self.left.width().max(self.right.width())
+    }
+
+    fn height(&self) -> u32 {
+        self.left.height().max(self.right.height())
+    }
+
+    fn get_f(&self, index: V2) -> V4 {
+        let l = self.left.get_f(index);
+        let r = self.right.get_f(index);
+
+        self.blend_mode.blend(l, r)
     }
 }

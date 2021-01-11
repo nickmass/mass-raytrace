@@ -1,10 +1,34 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use super::material::{CubeMap, Dielectric, Lambertian, Material, Metal, Mix, Specular};
+use super::material::{
+    Background, CubeMap, Dielectric, Lambertian, Material, Metal, Mix, Specular,
+};
 
-use crate::math::{V2, V3};
+use crate::obj_loader::ObjGroupFilter;
 use crate::texture::{Surface, Texture, YCbCrTexture};
+use crate::{
+    math::{V2, V3},
+    texture::{BlendMode, TextureBlend},
+};
+
+pub struct EveFilter;
+
+impl ObjGroupFilter for EveFilter {
+    fn include_group(&self, group_name: Option<&str>) -> bool {
+        if let Some(group_name) = group_name {
+            let include = ["Hull", "Glass", "exhaust", "Exhaust"].contains(&group_name);
+
+            if !include {
+                println!("obj discarding: {}", group_name);
+            }
+
+            include
+        } else {
+            false
+        }
+    }
+}
 
 struct InnerEveMaterial {
     normal_occlusion: Texture,
@@ -52,7 +76,7 @@ impl EveMaterial {
 
     pub fn albedo_roughness(&self, uv: V2) -> (V3, f32) {
         let pixel = self.inner.albedo_roughness.get_f(uv);
-        (V3::new(pixel.x(), pixel.y(), pixel.z()), pixel.w())
+        (pixel.contract(), pixel.w())
     }
 
     pub fn pmdg(&self, uv: V2) -> (f32, f32, f32, f32) {
@@ -114,7 +138,12 @@ impl Material for EveMaterial {
                 * (1.0 - dirt.min(1.0)))
                 + (V3::new(0.01, 0.005, 0.0) * dirt);
 
-            Mix::new(roughness, Lambertian::new(color), Specular::new(1.8, color)).scatter(ray, hit)
+            Mix::new(
+                (roughness + dirt).min(1.0),
+                Lambertian::new(color),
+                Specular::new(1.8, color),
+            )
+            .scatter(ray, hit)
         } else {
             None
         }
@@ -153,19 +182,7 @@ impl EveMaterialColor {
         }
     }
 
-    pub fn venture() -> Self {
-        Self {
-            colors: [
-                V3::new(0.02, 0.02, 0.02),
-                V3::new(0.1, 0.1, 0.1),
-                V3::new(0.15, 0.26, 0.39),
-                V3::new(0.85, 0.62, 0.2),
-            ],
-            glow: V3::new(0.5, 0.85, 2.0),
-        }
-    }
-
-    pub fn raven() -> Self {
+    pub fn caldari() -> Self {
         Self {
             colors: [
                 V3::new(0.02, 0.02, 0.02),
@@ -177,13 +194,25 @@ impl EveMaterialColor {
         }
     }
 
-    pub fn orca() -> Self {
+    pub fn ore() -> Self {
         Self {
             colors: [
                 V3::new(0.02, 0.02, 0.02),
                 V3::new(0.1, 0.1, 0.1),
                 V3::new(0.15, 0.26, 0.39),
                 V3::new(0.85, 0.62, 0.2),
+            ],
+            glow: V3::new(0.5, 0.85, 2.0),
+        }
+    }
+
+    pub fn soe() -> Self {
+        Self {
+            colors: [
+                V3::new(0.02, 0.02, 0.02),
+                V3::new(0.2, 0.2, 0.2),
+                V3::new(1.0, 1.0, 1.0),
+                V3::new(0.5, 0.0, 0.0),
             ],
             glow: V3::new(0.5, 0.85, 2.0),
         }
@@ -200,128 +229,135 @@ impl EveMaterialColor {
     }
 }
 
-pub struct Ship {
-    pub scale: f32,
-    pub model: &'static str,
-    pub material: EveMaterial,
+#[derive(Debug, Copy, Clone)]
+pub enum Hull {
+    Astero,
+    Avatar,
+    Buzzard,
+    Crow,
+    Orca,
+    Raven,
+    Rifter,
+    Venture,
 }
 
-impl Ship {
-    pub fn new(name: &str) -> Self {
-        let (material, model, scale) = match name.to_lowercase().as_str() {
-            "venture" => {
-                let material = EveMaterial::new(
-                    "models/oref1_t1/oref1_t1_no.png",
-                    "models/oref1_t1/oref1_t1_ar.png",
-                    "models/oref1_t1/oref1_t1_pmdg.png",
-                    EveMaterialColor::venture(),
-                )
-                .unwrap();
-                let model = "models/oref1_t1/OreF1_TShape1.obj";
-                let scale = 0.5;
-                (material, model, scale)
-            }
-            "raven" => {
-                let material = EveMaterial::new(
-                    "models/cb1_t1/cb1_t1_no.png",
-                    "models/cb1_t1/cb1_t1_ar.png",
-                    "models/cb1_t1/cb1_t1_navy_pmdg.png",
-                    EveMaterialColor::raven(),
-                )
-                .unwrap();
-                let model = "models/cb1_t1/CB1_TShape1.obj";
-                let scale = 0.12;
-                (material, model, scale)
-            }
-            "avatar" => {
-                let material = EveMaterial::new(
-                    "models/at1_t1/at1_t1_no.png",
-                    "models/at1_t1/at1_t1_ar.png",
-                    "models/at1_t1/at1_t1_pmdg.png",
-                    EveMaterialColor::venture(),
-                )
-                .unwrap();
-                let model = "models/at1_t1/AT1_TShape1.obj";
-                let scale = 0.007;
-                (material, model, scale)
-            }
-            "buzzard" => {
-                let material = EveMaterial::new(
-                    "models/cf3_t2/cf3_t2_no.png",
-                    "models/cf3_t2/cf3_t2_ar.png",
-                    "models/cf3_t2/cf3_t2_pmdg.png",
-                    EveMaterialColor::raven(),
-                )
-                .unwrap();
-                let model = "models/cf3_t2/CF3_TShape2.obj";
-                let scale = 0.75;
-                (material, model, scale)
-            }
-            "rifter" => {
-                let material = EveMaterial::new(
-                    "models/mf4_t1/mf4_t1_no.png",
-                    "models/mf4_t1/mf4_t1_ar.png",
-                    "models/mf4_t1/mf4_t1_pmdg.png",
-                    EveMaterialColor::venture(),
-                )
-                .unwrap();
-                let model = "models/mf4_t1/MF4_TShape1.obj";
-                let scale = 0.75;
-                (material, model, scale)
-            }
-            "asteros" => {
-                let material = EveMaterial::new(
-                    "models/soef1_t1/soef1_t1_no.png",
-                    "models/soef1_t1/soef1_t1_ar.png",
-                    "models/soef1_t1/soef1_t1_pmdg.png",
-                    EveMaterialColor::venture(),
-                )
-                .unwrap();
-                let model = "models/soef1_t1/SoEF1_TShape1.obj";
-                let scale = 0.75;
-                (material, model, scale)
-            }
-            "orca" => {
-                let material = EveMaterial::new(
-                    "models/orefr1_t1/orefr1_t1_no.png",
-                    "models/orefr1_t1/orefr1_t1_ar.png",
-                    "models/orefr1_t1/orefr1_t1_pmdg.png",
-                    EveMaterialColor::orca(),
-                )
-                .unwrap();
-                let model = "models/orefr1_t1/OreFr1_TShape1.obj";
-                let scale = 0.3;
-                (material, model, scale)
-            }
-            "crow" => {
-                let material = EveMaterial::new(
-                    "models/cf2_t2a/cf2_t2a_no.png",
-                    "models/cf2_t2a/cf2_t2a_ar.png",
-                    "models/cf2_t2a/cf2_t2a_pmdg.png",
-                    EveMaterialColor::venture(),
-                )
-                .unwrap();
-                let model = "models/cf2_t2a/CF2_T2aShape.obj";
-                let scale = 0.6;
-                (material, model, scale)
-            }
-            _ => panic!("unknown ship"),
-        };
-
-        Ship {
-            material,
-            model,
-            scale,
+pub fn load_ship(hull: Hull) -> crate::geom::Model<EveMaterial> {
+    let (material, model) = match hull {
+        Hull::Venture => {
+            let material = EveMaterial::new(
+                "models/oref1_t1/oref1_t1_no.png",
+                "models/oref1_t1/oref1_t1_ar.png",
+                "models/oref1_t1/oref1_t1_pmdg.png",
+                EveMaterialColor::ore(),
+            )
+            .unwrap();
+            let model = "models/oref1_t1/OreF1_TShape1.obj";
+            (material, model)
         }
-    }
+        Hull::Raven => {
+            let material = EveMaterial::new(
+                "models/cb1_t1/cb1_t1_no.png",
+                "models/cb1_t1/cb1_t1_ar.png",
+                "models/cb1_t1/cb1_t1_navy_pmdg.png",
+                EveMaterialColor::caldari(),
+            )
+            .unwrap();
+            let model = "models/cb1_t1/CB1_TShape1.obj";
+            (material, model)
+        }
+        Hull::Avatar => {
+            let material = EveMaterial::new(
+                "models/at1_t1/at1_t1_no.png",
+                "models/at1_t1/at1_t1_ar.png",
+                "models/at1_t1/at1_t1_pmdg.png",
+                EveMaterialColor::ore(),
+            )
+            .unwrap();
+            let model = "models/at1_t1/AT1_TShape1.obj";
+            (material, model)
+        }
+        Hull::Buzzard => {
+            let material = EveMaterial::new(
+                "models/cf3_t2/cf3_t2_no.png",
+                "models/cf3_t2/cf3_t2_ar.png",
+                "models/cf3_t2/cf3_t2_pmdg.png",
+                EveMaterialColor::caldari(),
+            )
+            .unwrap();
+            let model = "models/cf3_t2/CF3_TShape2.obj";
+            (material, model)
+        }
+        Hull::Rifter => {
+            let material = EveMaterial::new(
+                "models/mf4_t1/mf4_t1_no.png",
+                "models/mf4_t1/mf4_t1_ar.png",
+                "models/mf4_t1/mf4_t1_pmdg.png",
+                EveMaterialColor::ore(),
+            )
+            .unwrap();
+            let model = "models/mf4_t1/MF4_TShape1.obj";
+            (material, model)
+        }
+        Hull::Astero => {
+            let material = EveMaterial::new(
+                "models/soef1_t1/soef1_t1_no.png",
+                "models/soef1_t1/soef1_t1_ar.png",
+                "models/soef1_t1/soef1_t1_pmdg.png",
+                EveMaterialColor::soe(),
+            )
+            .unwrap();
+            let model = "models/soef1_t1/SoEF1_TShape1.obj";
+            (material, model)
+        }
+        Hull::Orca => {
+            let material = EveMaterial::new(
+                "models/orefr1_t1/orefr1_t1_no.png",
+                "models/orefr1_t1/orefr1_t1_ar.png",
+                "models/orefr1_t1/orefr1_t1_pmdg.png",
+                EveMaterialColor::ore(),
+            )
+            .unwrap();
+            let model = "models/orefr1_t1/OreFr1_TShape1.obj";
+            (material, model)
+        }
+        Hull::Crow => {
+            let material = EveMaterial::new(
+                "models/cf2_t2a/cf2_t2a_no.png",
+                "models/cf2_t2a/cf2_t2a_ar.png",
+                "models/cf2_t2a/cf2_t2a_pmdg.png",
+                EveMaterialColor::ore(),
+            )
+            .unwrap();
+            let model = "models/cf2_t2a/CF2_T2aShape.obj";
+            (material, model)
+        }
+    };
+
+    let tris = crate::obj_loader::ObjLoader::load(
+        model,
+        &EveFilter,
+        V3::new,
+        V3::new,
+        V2::new,
+        |a, b, c| crate::geom::Triangle::with_norms_and_uvs(material.clone(), a, b, c),
+    )
+    .unwrap();
+
+    crate::geom::Model::new(material, tris)
 }
 
-pub fn environment(name: &str, rotation: V3) -> CubeMap<YCbCrTexture> {
+pub fn environment(name: &str, rotation: V3) -> impl Background {
+    let stars = Texture::load_png("models/environments/stars01_tile2.png")
+        .unwrap()
+        .shared();
     let cube_dir = |index| {
         let luma = format!("models/environments/{}/{}.png", name, index);
         let chroma = format!("models/environments/{}/{}_chroma.png", name, index);
 
-        YCbCrTexture::load_png(luma, chroma).unwrap()
+        let stars = stars.clone();
+        let nebula = YCbCrTexture::load_png(luma, chroma).unwrap();
+
+        TextureBlend::new(BlendMode::Addition, stars, nebula)
     };
     CubeMap::new(
         cube_dir(0),

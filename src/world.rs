@@ -62,8 +62,8 @@ impl Camera {
         )
     }
 
-    pub fn trace<I: Intersect + Background>(&self, scene: &I, ray: Ray, depth: i32) -> (V3, i32) {
-        if depth <= 0 {
+    pub fn trace<I: Intersect + Background>(&self, scene: &I, ray: Ray, depth: u32) -> (V3, u32) {
+        if depth == 0 {
             (V3::zero(), depth)
         } else if let Some(hit) = scene.intersect(ray, 0.001, f32::INFINITY) {
             let emitted = hit.emit();

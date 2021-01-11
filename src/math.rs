@@ -30,9 +30,39 @@ mod types {
     pub type M4 = simd::M4;
 }
 
+impl V2 {
+    pub fn zero() -> Self {
+        Self::fill(0.0)
+    }
+
+    pub fn one() -> Self {
+        Self::fill(1.0)
+    }
+
+    pub fn expand(self, z: F) -> V3 {
+        V3::new(self.x(), self.y(), z)
+    }
+}
+
 impl V3 {
+    pub fn zero() -> Self {
+        Self::fill(0.0)
+    }
+
+    pub fn one() -> Self {
+        Self::fill(1.0)
+    }
+
     pub fn rand() -> Self {
         Self::new(F::rand(), F::rand(), F::rand())
+    }
+
+    pub fn expand(self, w: F) -> V4 {
+        V4::new(self.x(), self.y(), self.z(), w)
+    }
+
+    pub fn contract(self) -> V2 {
+        V2::new(self.x(), self.y())
     }
 
     pub fn length_squared(&self) -> F {
@@ -118,6 +148,20 @@ impl V3 {
     }
 }
 
+impl V4 {
+    pub fn zero() -> Self {
+        Self::fill(0.0)
+    }
+
+    pub fn one() -> Self {
+        Self::fill(1.0)
+    }
+
+    pub fn contract(self) -> V3 {
+        V3::new(self.x(), self.y(), self.z())
+    }
+}
+
 impl M4 {
     pub fn identity() -> Self {
         Self::new(
@@ -137,60 +181,37 @@ impl M4 {
         )
     }
 
-    pub fn rotation(rotate: V3) -> Self {
-        let rotate = rotate * PI * 2.0;
-        let (sin_x, cos_x) = rotate.x().sin_cos();
-        let (sin_y, cos_y) = rotate.y().sin_cos();
-        let (sin_z, cos_z) = rotate.z().sin_cos();
+    pub fn rotate_x(angle: F) -> Self {
+        let (sin_x, cos_x) = (angle * PI * 2.0).sin_cos();
 
-        let rotation_x = M4::new(
+        M4::new(
             V4::new(1.0, 0.0, 0.0, 0.0),
             V4::new(0.0, cos_x, sin_x, 0.0),
             V4::new(0.0, -sin_x, cos_x, 0.0),
             V4::new(0.0, 0.0, 0.0, 1.0),
-        );
-        let rotation_y = M4::new(
-            V4::new(cos_y, 0.0, sin_y, 0.0),
-            V4::new(0.0, 1.0, 0.0, 0.0),
-            V4::new(-sin_y, 0.0, cos_y, 0.0),
-            V4::new(0.0, 0.0, 0.0, 1.0),
-        );
-        let rotation_z = M4::new(
-            V4::new(cos_z, -sin_z, 0.0, 0.0),
-            V4::new(sin_z, cos_z, 0.0, 0.0),
-            V4::new(0.0, 0.0, 1.0, 0.0),
-            V4::new(0.0, 0.0, 0.0, 1.0),
-        );
-
-        rotation_x * rotation_y * rotation_z
+        )
     }
 
-    pub fn rotation_rev(rotate: V3) -> Self {
-        let rotate = rotate * PI * 2.0;
-        let (sin_x, cos_x) = rotate.x().sin_cos();
-        let (sin_y, cos_y) = rotate.y().sin_cos();
-        let (sin_z, cos_z) = rotate.z().sin_cos();
+    pub fn rotate_y(angle: F) -> Self {
+        let (sin_y, cos_y) = (angle * PI * 2.0).sin_cos();
 
-        let rotation_x = M4::new(
-            V4::new(1.0, 0.0, 0.0, 0.0),
-            V4::new(0.0, cos_x, sin_x, 0.0),
-            V4::new(0.0, -sin_x, cos_x, 0.0),
-            V4::new(0.0, 0.0, 0.0, 1.0),
-        );
-        let rotation_y = M4::new(
+        M4::new(
             V4::new(cos_y, 0.0, sin_y, 0.0),
             V4::new(0.0, 1.0, 0.0, 0.0),
             V4::new(-sin_y, 0.0, cos_y, 0.0),
             V4::new(0.0, 0.0, 0.0, 1.0),
-        );
-        let rotation_z = M4::new(
+        )
+    }
+
+    pub fn rotate_z(angle: F) -> Self {
+        let (sin_z, cos_z) = (angle * PI * 2.0).sin_cos();
+
+        M4::new(
             V4::new(cos_z, -sin_z, 0.0, 0.0),
             V4::new(sin_z, cos_z, 0.0, 0.0),
             V4::new(0.0, 0.0, 1.0, 0.0),
             V4::new(0.0, 0.0, 0.0, 1.0),
-        );
-
-        rotation_z * rotation_y * rotation_x
+        )
     }
 
     pub fn scale(scale: V3) -> Self {

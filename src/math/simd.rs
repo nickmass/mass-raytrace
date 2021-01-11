@@ -9,12 +9,12 @@ use super::F;
 type Fx4 = f32x4;
 type Fx2 = f32x2;
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct V2 {
     inner: Fx2,
 }
 impl V2 {
-    pub fn new(x: F, y: F) -> Self {
+    pub const fn new(x: F, y: F) -> Self {
         Self {
             inner: Fx2::new(x, y),
         }
@@ -23,12 +23,6 @@ impl V2 {
     pub fn fill(v: F) -> Self {
         Self {
             inner: Fx2::splat(v),
-        }
-    }
-
-    pub fn zero() -> Self {
-        Self {
-            inner: Fx2::splat(0.0),
         }
     }
 
@@ -43,13 +37,13 @@ impl V2 {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct V3 {
     inner: Fx4,
 }
 
 impl V3 {
-    pub fn new(x: F, y: F, z: F) -> Self {
+    pub const fn new(x: F, y: F, z: F) -> Self {
         Self {
             inner: Fx4::new(x, y, z, 1.0),
         }
@@ -58,12 +52,6 @@ impl V3 {
     pub fn fill(v: F) -> Self {
         Self {
             inner: Fx4::splat(v),
-        }
-    }
-
-    pub fn zero() -> Self {
-        Self {
-            inner: Fx4::splat(0.0),
         }
     }
 
@@ -116,15 +104,21 @@ impl V3 {
             inner: self.inner.powf(Self::fill(pow).inner),
         }
     }
+
+    pub fn abs(&self) -> Self {
+        Self {
+            inner: self.inner.abs(),
+        }
+    }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct V4 {
     inner: Fx4,
 }
 
 impl V4 {
-    pub fn new(x: F, y: F, z: F, w: F) -> Self {
+    pub const fn new(x: F, y: F, z: F, w: F) -> Self {
         Self {
             inner: Fx4::new(x, y, z, w),
         }
@@ -133,12 +127,6 @@ impl V4 {
     pub fn fill(v: F) -> Self {
         Self {
             inner: Fx4::splat(v),
-        }
-    }
-
-    pub fn zero() -> Self {
-        Self {
-            inner: Fx4::splat(0.0),
         }
     }
 
@@ -160,6 +148,18 @@ impl V4 {
     #[inline(always)]
     pub fn w(&self) -> F {
         unsafe { self.inner.extract_unchecked(3) }
+    }
+
+    pub fn min(&self, other: Self) -> Self {
+        Self {
+            inner: self.inner.min(other.inner),
+        }
+    }
+
+    pub fn max(&self, other: Self) -> Self {
+        Self {
+            inner: self.inner.max(other.inner),
+        }
     }
 }
 
@@ -183,6 +183,17 @@ macro_rules! implement_vector {
             fn $func(self, other: F) -> Self::Output {
                 Self {
                     inner: self.inner.$func(other),
+                }
+            }
+        }
+
+        impl $op<$name> for F {
+            type Output = $name;
+
+            #[inline(always)]
+            fn $func(self, other: $name) -> Self::Output {
+                $name {
+                    inner: self.$func(other.inner),
                 }
             }
         }
@@ -211,6 +222,7 @@ implement_vector!(operator, V2, Div, div, DivAssign, div_assign);
 implement_vector!(operator, V3, Add, add, AddAssign, add_assign);
 implement_vector!(operator, V3, Sub, sub, SubAssign, sub_assign);
 implement_vector!(operator, V3, Mul, mul, MulAssign, mul_assign);
+implement_vector!(operator, V3, Div, div, DivAssign, div_assign);
 
 implement_vector!(operator, V4, Add, add, AddAssign, add_assign);
 implement_vector!(operator, V4, Sub, sub, SubAssign, sub_assign);
@@ -249,38 +261,6 @@ impl Neg for V3 {
     }
 }
 
-impl Div for V3 {
-    type Output = Self;
-    fn div(self, other: Self) -> Self {
-        let other = unsafe { other.inner.replace_unchecked(3, 1.0) };
-        Self {
-            inner: self.inner.div(other),
-        }
-    }
-}
-
-impl Div<F> for V3 {
-    type Output = Self;
-    fn div(self, other: F) -> Self {
-        Self {
-            inner: self.inner.div(other),
-        }
-    }
-}
-
-impl DivAssign for V3 {
-    fn div_assign(&mut self, other: Self) {
-        let other = unsafe { other.inner.replace_unchecked(3, 1.0) };
-        self.inner = self.inner.div(other);
-    }
-}
-
-impl DivAssign<F> for V3 {
-    fn div_assign(&mut self, other: F) {
-        self.inner = self.inner.div(other);
-    }
-}
-
 impl From<[F; 4]> for V4 {
     fn from(other: [F; 4]) -> Self {
         Self::new(other[0], other[1], other[2], other[3])
@@ -306,13 +286,13 @@ pub struct M4 {
 }
 
 impl M4 {
-    pub fn new<T: Into<V4>>(c0: T, c1: T, c2: T, c3: T) -> Self {
-        let c0 = c0.into().inner;
-        let c1 = c1.into().inner;
-        let c2 = c2.into().inner;
-        let c3 = c3.into().inner;
-
-        M4 { c0, c1, c2, c3 }
+    pub const fn new(c0: V4, c1: V4, c2: V4, c3: V4) -> Self {
+        M4 {
+            c0: c0.inner,
+            c1: c1.inner,
+            c2: c2.inner,
+            c3: c3.inner,
+        }
     }
 
     pub fn transpose(self) -> Self {
@@ -322,11 +302,30 @@ impl M4 {
         let a3: [F; 4] = self.c3.into();
 
         Self::new(
-            [a0[0], a1[0], a2[0], a3[0]],
-            [a0[1], a1[1], a2[1], a3[1]],
-            [a0[2], a1[2], a2[2], a3[2]],
-            [a0[3], a1[3], a2[3], a3[3]],
+            [a0[0], a1[0], a2[0], a3[0]].into(),
+            [a0[1], a1[1], a2[1], a3[1]].into(),
+            [a0[2], a1[2], a2[2], a3[2]].into(),
+            [a0[3], a1[3], a2[3], a3[3]].into(),
         )
+    }
+
+    fn transform(self, rhs: V3, w: F) -> V3 {
+        let vx = self.c0 * rhs.x();
+        let vy = self.c1 * rhs.y();
+        let vz = self.c2 * rhs.z();
+        let vw = self.c3 * w;
+
+        let v = vx + vy + vz + vw;
+
+        V3 { inner: v }
+    }
+
+    pub fn transform_vector(self, rhs: V3) -> V3 {
+        self.transform(rhs, 0.0)
+    }
+
+    pub fn transform_point(self, rhs: V3) -> V3 {
+        self.transform(rhs, 1.0)
     }
 }
 
@@ -362,22 +361,5 @@ impl Mul for M4 {
             c2: Fx4::new(c20, c21, c22, c23),
             c3: Fx4::new(c30, c31, c32, c33),
         }
-    }
-}
-
-impl Mul<V3> for M4 {
-    type Output = V3;
-
-    fn mul(self, rhs: V3) -> Self::Output {
-        let vx = self.c0 * rhs.x();
-        let vy = self.c1 * rhs.y();
-        let vz = self.c2 * rhs.z();
-        let vw = self.c3 * 1.0;
-
-        let v = vx + vy + vz + vw;
-        let w = unsafe { v.extract_unchecked(3) };
-        let v = v / w;
-
-        V3 { inner: v }
     }
 }

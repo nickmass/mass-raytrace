@@ -30,62 +30,83 @@ mod world;
 #[derive(Debug)]
 enum UserEvent {
     Update,
+    Complete,
 }
 
-const MAX_DEPTH: i32 = 250;
+const MAX_DEPTH: u32 = 150;
 
 const ASPECT_RATIO: f32 = 16.0 / 9.0;
-
 const IMAGE_WIDTH: u32 = 1920 * 2;
 const IMAGE_HEIGHT: u32 = (IMAGE_WIDTH as f32 / ASPECT_RATIO) as u32;
 
 const ANIMATING: bool = false;
+const FRAMES_PER_SECOND: u32 = 24;
+const ANIMATION_DURATION: u32 = 5;
+const TOTAL_FRAMES: u32 = FRAMES_PER_SECOND * ANIMATION_DURATION;
+const SAMPLES_PER_FRAME: u32 = 10;
 
 fn main() {
+    let event_loop: EventLoop<UserEvent> = EventLoop::with_user_event();
+    let event_proxy = Arc::new(Mutex::new(event_loop.create_proxy()));
+    let image = Arc::new(Image::new(IMAGE_WIDTH, IMAGE_HEIGHT));
+
+    {
+        let image = image.clone();
+        std::thread::spawn(|| worker(image, event_proxy));
+    }
+
+    run(event_loop, image)
+}
+
+fn worker(image: Arc<Image>, event_proxy: Arc<Mutex<EventLoopProxy<UserEvent>>>) {
     fastrand::seed(1);
 
-    let mut frame = 40;
-
-    let frame_rate = 24;
-    let seconds = 5;
-    let total_frames = frame_rate * seconds;
-    let samples_per_frame = if ANIMATING { Some(10) } else { None };
+    let mut frame = 0;
+    let samples_per_frame = if ANIMATING {
+        Some(SAMPLES_PER_FRAME)
+    } else {
+        None
+    };
 
     let start_time = std::time::Instant::now();
+    while frame < TOTAL_FRAMES {
+        image.clear();
 
-    while frame < total_frames {
-        let animation_t = frame as f32 / total_frames as f32;
+        let animation_t = frame as f32 / TOTAL_FRAMES as f32;
+
         let (mut world, camera) = scenes::cornell_box(animation_t, ASPECT_RATIO);
 
         world.build_bvh();
 
-        let event_loop: EventLoop<UserEvent> = EventLoop::with_user_event();
-        let image = Arc::new(Image::new(IMAGE_WIDTH, IMAGE_HEIGHT));
-
         {
             let image = image.clone();
-            let proxy = Arc::new(Mutex::new(event_loop.create_proxy()));
-            render(image, proxy, world, camera, samples_per_frame);
+            let event_proxy = event_proxy.clone();
+            render(image, event_proxy, world, camera, samples_per_frame);
         }
 
-        if ANIMATING {
-            image.dump(format!("animation/frame_{:03}.png", frame));
-        } else {
-            run(event_loop, image)
-        }
         frame += 1;
+        if ANIMATING {
+            image.dump(format!("animation/frame_{:05}.png", frame));
 
-        let elapsed_s = start_time.elapsed().as_secs() as f32;
-        let complete = frame as f32 / total_frames as f32;
-        let total_s = (1.0 / complete) * elapsed_s;
-        let remaining_s = total_s - elapsed_s;
-        println!(
-            "Animation: {:.2}%  ~{:.1} minutes remaining, {:.1} minutes elapsed.",
-            complete * 100.0,
-            remaining_s / 60.0,
-            elapsed_s / 60.0
-        )
+            let elapsed_s = start_time.elapsed().as_secs() as f32;
+            let complete = frame as f32 / TOTAL_FRAMES as f32;
+            let total_s = (1.0 / complete) * elapsed_s;
+            let remaining_s = total_s - elapsed_s;
+
+            println!(
+                "Animation: {:.2}%  ~{:.1} minutes remaining, {:.1} minutes elapsed.",
+                complete * 100.0,
+                remaining_s / 60.0,
+                elapsed_s / 60.0
+            );
+        }
     }
+
+    event_proxy
+        .lock()
+        .expect("Event proxy posioned")
+        .send_event(UserEvent::Complete)
+        .expect("Unable to reach event loop");
 }
 
 fn render<B: 'static + material::Background>(
@@ -93,7 +114,7 @@ fn render<B: 'static + material::Background>(
     event_proxy: Arc<Mutex<EventLoopProxy<UserEvent>>>,
     world: world::World<B>,
     camera: world::Camera,
-    frame_limit: Option<usize>,
+    frame_limit: Option<u32>,
 ) {
     let world = Arc::new(world);
     let camera = Arc::new(camera);
@@ -120,7 +141,7 @@ fn render<B: 'static + material::Background>(
                 while frame_limit.is_none() || frame_limit != Some(0) {
                     let frame_start = std::time::Instant::now();
                     for y in 0..image.height {
-                        if i == 0 && first && frame_limit.is_none() {
+                        if i == 0 && first && frame_limit.is_none() && y % 10 == 0 {
                             println!("{:.2}%", y as f64 / image.height as f64 * 100.0);
                         }
                         for x in 0..image.width {
@@ -154,10 +175,8 @@ fn render<B: 'static + material::Background>(
         handles.push(handle);
     }
 
-    if frame_limit.is_some() {
-        for handle in handles {
-            handle.join().unwrap();
-        }
+    for handle in handles {
+        handle.join().unwrap();
     }
 }
 
@@ -250,7 +269,7 @@ fn run(event_loop: EventLoop<UserEvent>, image: Arc<Image>) -> ! {
 }
 
 struct ImageBuffer {
-    pixels: Vec<((f32, f32, f32), u32)>,
+    pixels: Vec<(V3, u32)>,
     width: u32,
     height: u32,
 }
@@ -258,15 +277,15 @@ struct ImageBuffer {
 impl ImageBuffer {
     fn new(width: u32, height: u32) -> Self {
         ImageBuffer {
-            pixels: vec![((0.0, 0.0, 0.0), 0); (width * height) as usize],
+            pixels: vec![(V3::zero(), 0); (width * height) as usize],
             width,
             height,
         }
     }
 
-    fn set(&mut self, position: (u32, u32), color: V3, depth: i32) {
+    fn set(&mut self, position: (u32, u32), color: V3, depth: u32) {
         let index = ((position.1 * self.width) + position.0) as usize;
-        self.pixels[index] = ((color.x(), color.y(), color.z()), depth.max(0) as u32);
+        self.pixels[index] = (color, depth);
     }
 }
 
@@ -279,7 +298,7 @@ struct Image {
 impl Image {
     fn new(width: u32, height: u32) -> Self {
         Image {
-            pixels: std::sync::Mutex::new((0, vec![(V3::fill(0.0), 0); (width * height) as usize])),
+            pixels: std::sync::Mutex::new((0, vec![(V3::zero(), 0); (width * height) as usize])),
             width,
             height,
         }
@@ -294,8 +313,8 @@ impl Image {
         for (&(buf_color, buf_depth), (image_color, image_depth)) in
             buffer.pixels.iter().zip(pixels.1.iter_mut())
         {
-            *image_color += V3::new(buf_color.0, buf_color.1, buf_color.2);
-            *image_depth = (*image_depth).max(buf_depth);
+            *image_color += buf_color;
+            *image_depth += buf_depth;
         }
         pixels.0 += 1;
     }
@@ -318,8 +337,10 @@ impl Image {
 
             if show_depth {
                 let max_depth = pixels.1.iter().map(|p| p.1).max().unwrap_or(1).max(1);
+                let max_depth = max_depth as f32 * scale;
                 for (_color, depth) in pixels.1.iter() {
-                    let depth = ((*depth as f32 / max_depth as f32) * 255.0) as u8;
+                    let depth =
+                        (((*depth as f32 * scale) / max_depth).max(0.0).min(1.0) * 255.0) as u8;
                     pixel_bytes.push(depth);
                     pixel_bytes.push(depth);
                     pixel_bytes.push(depth);
@@ -335,6 +356,17 @@ impl Image {
             }
             pixel_bytes
         }
+    }
+
+    fn clear(&self) {
+        let mut pixels = self.pixels.lock().unwrap();
+
+        for (pixel, depth) in pixels.1.iter_mut() {
+            *pixel = V3::zero();
+            *depth = 0;
+        }
+
+        pixels.0 = 0;
     }
 
     fn fill<F: Facade>(&self, display: &F, show_depth: bool) -> SrgbTexture2d {

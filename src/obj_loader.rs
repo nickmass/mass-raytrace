@@ -2,10 +2,21 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
+pub trait ObjGroupFilter {
+    fn include_group(&self, group_name: Option<&str>) -> bool;
+}
+
+impl ObjGroupFilter for () {
+    fn include_group(&self, _group_name: Option<&str>) -> bool {
+        true
+    }
+}
+
 pub struct ObjLoader;
 
 impl ObjLoader {
     pub fn load<
+        GF: ObjGroupFilter,
         P: AsRef<Path>,
         FV: FnMut(f32, f32, f32) -> V,
         FN: FnMut(f32, f32, f32) -> N,
@@ -17,6 +28,7 @@ impl ObjLoader {
         F,
     >(
         path: P,
+        group_filter: &GF,
         mut vertex_fn: FV,
         mut normal_fn: FN,
         mut uv_fn: FUV,
@@ -31,6 +43,7 @@ impl ObjLoader {
         let mut faces = Vec::new();
 
         let mut line = String::new();
+        let mut include_faces = group_filter.include_group(None);
         loop {
             line.clear();
             let bytes = file.read_line(&mut line)?;
@@ -77,6 +90,9 @@ impl ObjLoader {
                     }
                 }
                 Some("f") => {
+                    if !include_faces {
+                        continue;
+                    }
                     let read_face = |s: Option<&&str>| {
                         s.and_then(|s| {
                             let mut splits = s.split('/').filter_map(|n| n.parse::<usize>().ok());
@@ -96,6 +112,11 @@ impl ObjLoader {
                         faces.push(face);
                     } else {
                         return Err(format!("unable to parse face: {}", line))?;
+                    }
+                }
+                Some("o") => {
+                    if let Some(group_name) = parts.get(1) {
+                        include_faces = group_filter.include_group(Some(group_name));
                     }
                 }
                 _ => (),

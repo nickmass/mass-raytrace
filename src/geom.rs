@@ -219,8 +219,8 @@ impl BoundingBox {
         let v_min = (self.minimum - ray.origin) / ray.direction;
         let v_max = (self.maximum - ray.origin) / ray.direction;
 
-        let min = v_min.min(v_max);
-        let max = v_min.max(v_max);
+        let min: V3 = v_min.min(v_max);
+        let max: V3 = v_min.max(v_max);
 
         let t_min = min.x().max(t_min);
         let t_max = max.x().min(t_max);
@@ -273,7 +273,7 @@ impl BoundingBox {
 }
 
 pub struct Model<M: Material> {
-    material: M,
+    pub material: M,
     triangles: Arc<BvhNode>,
 }
 
@@ -331,9 +331,7 @@ pub struct Instance<M: Material> {
     triangles: Arc<BvhNode>,
     material: M,
     transform: M4,
-    rotation: M4,
-    ray_transform: M4,
-    ray_rotation: M4,
+    inv_transform: M4,
     bounding_box: BoundingBox,
 }
 
@@ -345,26 +343,38 @@ impl<M: Material> Instance<M> {
         rotation: V3,
         scale: V3,
     ) -> Self {
-        let ray_translation = translation * -1.0;
-        let ray_rotation = rotation * -1.0;
-        let ray_scale = V3::fill(1.0) / scale;
+        let inv_translation = translation * -1.0;
+        let inv_rotation = rotation * -1.0;
+        let inv_scale = 1.0 / scale;
 
         let translation = M4::translation(translation);
-        let ray_translation = M4::translation(ray_translation);
+        let inv_translation = M4::translation(inv_translation);
 
-        let rotation = M4::rotation(rotation);
-        let ray_rotation = M4::rotation_rev(ray_rotation);
+        let rotation_x = M4::rotate_x(rotation.x());
+        let rotation_y = M4::rotate_y(rotation.y());
+        let rotation_z = M4::rotate_z(rotation.z());
+
+        let inv_rotation_x = M4::rotate_x(inv_rotation.x());
+        let inv_rotation_y = M4::rotate_y(inv_rotation.y());
+        let inv_rotation_z = M4::rotate_z(inv_rotation.z());
+
+        let rotation = rotation_x * rotation_y * rotation_z;
+        let inv_rotation = inv_rotation_z * inv_rotation_y * inv_rotation_x;
 
         let scale = M4::scale(scale);
-        let ray_scale = M4::scale(ray_scale);
+        let inv_scale = M4::scale(inv_scale);
 
-        let transform = translation * scale * rotation;
-        let ray_transform = ray_rotation * ray_scale * ray_translation;
+        let transform = translation * rotation * scale;
+        let inv_transform = inv_scale * inv_rotation * inv_translation;
 
         let mut minimum = V3::fill(f32::INFINITY);
         let mut maximum = V3::fill(f32::NEG_INFINITY);
 
-        for corner in triangles.bounding_box.corners().map(|c| transform * c) {
+        for corner in triangles
+            .bounding_box
+            .corners()
+            .map(|c| transform.transform_point(c))
+        {
             minimum = minimum.min(corner);
             maximum = maximum.max(corner);
         }
@@ -375,9 +385,7 @@ impl<M: Material> Instance<M> {
             triangles,
             material,
             transform,
-            rotation,
-            ray_transform,
-            ray_rotation,
+            inv_transform,
             bounding_box,
         }
     }
@@ -386,13 +394,13 @@ impl<M: Material> Instance<M> {
 impl<M: Material> Intersect for Instance<M> {
     fn intersect(&self, ray: Ray, t_min: f32, t_max: f32) -> Option<Hit<'_>> {
         let ray = Ray::new(
-            self.ray_transform * ray.origin,
-            self.ray_rotation * ray.direction,
+            self.inv_transform.transform_point(ray.origin),
+            self.inv_transform.transform_vector(ray.direction),
         );
         let hit = self.triangles.intersect(ray, t_min, t_max);
         if let Some(mut hit) = hit {
-            hit.point = self.transform * hit.point;
-            hit.normal = self.rotation * hit.normal;
+            hit.point = self.transform.transform_point(hit.point);
+            hit.normal = self.transform.transform_vector(hit.normal).unit();
             hit.material = &self.material;
             Some(hit)
         } else {
@@ -483,7 +491,7 @@ impl<M: Material> Intersect for Triangle<M> {
         let p_vec = ray.direction.cross(ac);
         let det = ab.dot(p_vec);
 
-        if det.abs() < f32::EPSILON * 2.0 {
+        if det.abs() < 0.000001 {
             return None;
         }
 
@@ -527,10 +535,9 @@ impl<M: Material> Intersect for Triangle<M> {
             let uv = uvs.uv_a * a0 + uvs.uv_b * a1 + uvs.uv_c * a2;
 
             let normal = if let Some(tan_normal) = self.material.normal(uv) {
-                (self.tangent * tan_normal.x()
+                self.tangent * tan_normal.x()
                     + self.bitangent * tan_normal.y()
-                    + normal * tan_normal.z())
-                .unit()
+                    + normal * tan_normal.z()
             } else {
                 normal
             };

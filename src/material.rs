@@ -90,7 +90,12 @@ pub struct CubeMap<S: Surface> {
 
 impl<S: Surface> CubeMap<S> {
     pub fn new(x_pos: S, x_neg: S, y_pos: S, y_neg: S, z_pos: S, z_neg: S, rotation: V3) -> Self {
-        let transform = M4::rotation(rotation);
+        let rotate_x = M4::rotate_x(rotation.x());
+        let rotate_y = M4::rotate_x(rotation.y());
+        let rotate_z = M4::rotate_x(rotation.z());
+
+        let transform = rotate_x * rotate_y * rotate_z;
+
         Self {
             x_pos,
             x_neg,
@@ -105,9 +110,9 @@ impl<S: Surface> CubeMap<S> {
 
 impl<S: Surface> Background for CubeMap<S> {
     fn background(&self, ray: Ray) -> V3 {
-        let p = self.transform * ray.direction.unit();
+        let p = self.transform.transform_vector(ray.direction);
 
-        let abs_p = V3::new(p.x().abs(), p.y().abs(), p.z().abs());
+        let abs_p = p.abs();
 
         let is_x_pos = p.x() > 0.0;
         let is_y_pos = p.y() > 0.0;
@@ -170,7 +175,7 @@ impl<S: Surface> Background for CubeMap<S> {
             _ => unreachable!(),
         };
 
-        V3::new(color.x(), color.y(), color.z())
+        color.contract()
     }
 }
 
