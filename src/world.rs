@@ -77,6 +77,19 @@ impl Camera {
             (scene.background(ray), depth)
         }
     }
+
+    pub fn albedo_normal<I: Intersect + Background>(&self, scene: &I, ray: Ray) -> (V3, V3) {
+        if let Some(hit) = scene.intersect(ray, 0.001, f32::INFINITY) {
+            let emitted = hit.emit();
+            if let Some(scatter) = hit.scatter(ray) {
+                (scatter.attenuation, hit.normal)
+            } else {
+                (emitted, hit.normal)
+            }
+        } else {
+            (scene.background(ray), V3::zero())
+        }
+    }
 }
 
 pub struct World<B: Background> {

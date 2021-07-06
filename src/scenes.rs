@@ -65,11 +65,11 @@ pub fn cornell_box(_animation_t: f32, aspect_ratio: f32) -> (World<impl Backgrou
 
 pub fn scratchpad(_animation_t: f32, aspect_ratio: f32) -> (World<impl Background>, Camera) {
     use crate::eve;
-    let cube_map = eve::environment("c01", V3::zero());
+    let cube_map = eve::environment("wormhole_class_05", V3::zero());
     let mut world = World::new(cube_map);
 
-    let venture = eve::load_ship(eve::Hull::Venture);
-    let orca = eve::load_ship(eve::Hull::Orca);
+    let venture = eve::load_ship(eve::Hull::Stratios);
+    let orca = eve::load_ship(eve::Hull::Nestor);
 
     let orca_pos = V3::new(-1250.0, 5.0, 0.0);
     world.add(orca.instance(
@@ -100,7 +100,7 @@ pub fn scratchpad(_animation_t: f32, aspect_ratio: f32) -> (World<impl Backgroun
                     venture.material.clone(),
                     pos,
                     rotation + ((V3::rand() - 0.5) / 30.5),
-                    V3::one(),
+                    V3::fill(0.2),
                 );
                 world.add(instance);
             }
@@ -116,11 +116,149 @@ pub fn scratchpad(_animation_t: f32, aspect_ratio: f32) -> (World<impl Backgroun
     */
 
     let look_at = orca_pos;
+
     let focus_distance = (look_from - look_at).length();
-    let aperture = 6.0;
+    let aperture = 0.2;
 
     let camera = Camera::new(
         50.0,
+        look_from,
+        look_at,
+        V3::new(0.0, 1.0, 0.0),
+        aspect_ratio,
+        aperture,
+        focus_distance,
+    );
+
+    (world, camera)
+}
+
+pub fn sphere_grid(_animation_t: f32, aspect_ratio: f32) -> (World<impl Background>, Camera) {
+    let mut world = World::new(SolidBackground::new(V3::zero()));
+
+    let white = Lambertian::new(V3::one());
+    let cube = PlyLoader::load("cube.ply", V3::new, |a, b, c| Triangle::new((), a, b, c)).unwrap();
+    let cube = Model::new((), cube);
+    let ground = cube.instance(
+        white,
+        V3::new(0.0, -1000.0, 0.0),
+        V3::zero(),
+        V3::fill(1000.0),
+    );
+
+    world.add(ground);
+
+    let r: f32 = 1.0;
+    let d = r * 2.0;
+    let a = (d.powi(2) - r.powi(2)).sqrt();
+
+    let dim = 50;
+    for i in -dim..dim {
+        for j in -dim..dim {
+            let off = if j % 2 == 0 { r } else { 0.0 };
+            let x = (i as f32 * d) + off;
+            let z = j as f32 * a;
+            let y = r;
+
+            let r = r - 0.05;
+
+            match (i, j) {
+                (0, 0) => {
+                    let m = DiffuseLight::new(V3::fill(3.0));
+                    let s = Sphere::new(m, V3::new(x, y, z), r);
+
+                    world.add(s);
+                }
+                (-1, 0) | (1, 0) | (1, -1) | (0, -1) | (1, 1) | (0, 1) => {
+                    let m = Dielectric::new(1.8);
+                    let s = Sphere::new(m, V3::new(x, y, z), r);
+
+                    world.add(s);
+                }
+                (_, _) => {
+                    let m = Metal::new(0.0, V3::rand());
+                    let s = Sphere::new(m, V3::new(x, y, z), r);
+
+                    world.add(s);
+                }
+            }
+        }
+    }
+
+    let look_from = V3::new(6.0, 8.0, 5.0);
+    let look_at = V3::new(0.0, 0.0, 0.0);
+    let focus_distance = (look_from - look_at).length();
+    let aperture = 0.00;
+
+    let camera = Camera::new(
+        40.0,
+        look_from,
+        look_at,
+        V3::new(0.0, 1.0, 0.0),
+        aspect_ratio,
+        aperture,
+        focus_distance,
+    );
+
+    (world, camera)
+}
+
+pub fn lucy(_animation_t: f32, aspect_ratio: f32) -> (World<impl Background>, Camera) {
+    let mut world = World::new(SolidBackground::new(V3::zero()));
+
+    let mut max_dim = 0.0;
+
+    let lucy = PlyLoader::load(
+        "models/lucy.ply",
+        |x, y, z| {
+            max_dim = max_dim.max(x.abs()).max(y.abs()).max(z.abs());
+            V3::new(y, z, x)
+        },
+        |a, b, c| Triangle::new((), a, b, c),
+    )
+    .unwrap();
+    let lucy = Model::new((), lucy);
+
+    let white = Lambertian::new(V3::one());
+    let cube = PlyLoader::load("cube.ply", V3::new, |a, b, c| Triangle::new((), a, b, c)).unwrap();
+    let cube = Model::new((), cube);
+    let ground = cube.instance(
+        Metal::new(0.9, V3::one()),
+        V3::new(0.0, -1000.0, 0.0),
+        V3::zero(),
+        V3::fill(1000.0),
+    );
+
+    world.add(ground);
+    for x in -5..6 {
+        for z in -5..6 {
+            world.add(lucy.instance(
+                Lambertian::new(V3::new(
+                    1.0 - (f32::rand() * 0.5),
+                    1.0 - (f32::rand() * 0.5),
+                    1.0 - (f32::rand() * 0.5),
+                )),
+                V3::new(x as f32 * 3.0, 1.0, z as f32 * 3.0),
+                V3::new(0.0, f32::rand(), 0.0),
+                V3::fill(1.0 / max_dim) * 2.0,
+            ));
+        }
+    }
+
+    let sun = Sphere::new(
+        DiffuseLight::new(V3::new(4.0, 4.0, 5.0) * 10.0),
+        V3::new(10000.0, 4000.0, 4800.0),
+        1500.0,
+    );
+    world.add(sun);
+
+    let look_from = V3::new(6.0, 8.0, 5.0);
+    let look_at = V3::new(0.0, 0.0, 0.0);
+    let focus_distance = (look_from - look_at).length();
+    let aperture = 0.00;
+
+    let camera = Camera::new(
+        40.0,
         look_from,
         look_at,
         V3::new(0.0, 1.0, 0.0),

@@ -12,6 +12,7 @@ use winit::{
     window::WindowBuilder,
 };
 
+use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex};
 
 mod math;
@@ -31,6 +32,7 @@ mod world;
 enum UserEvent {
     Update,
     Complete,
+    Redraw(Vec<u8>),
 }
 
 const MAX_DEPTH: u32 = 150;
@@ -44,6 +46,8 @@ const FRAMES_PER_SECOND: u32 = 24;
 const ANIMATION_DURATION: u32 = 5;
 const TOTAL_FRAMES: u32 = FRAMES_PER_SECOND * ANIMATION_DURATION;
 const SAMPLES_PER_FRAME: u32 = 10;
+
+static PIXEL_UPDATE_FLAG: AtomicBool = AtomicBool::new(false);
 
 fn main() {
     let event_loop: EventLoop<UserEvent> = EventLoop::with_user_event();
@@ -86,7 +90,10 @@ fn worker(image: Arc<Image>, event_proxy: Arc<Mutex<EventLoopProxy<UserEvent>>>)
 
         frame += 1;
         if ANIMATING {
-            image.dump(format!("animation/frame_{:05}.png", frame));
+            image.dump(
+                format!("animation/frame_{:05}.png", frame),
+                DisplayMode::Default,
+            );
 
             let elapsed_s = start_time.elapsed().as_secs() as f32;
             let complete = frame as f32 / TOTAL_FRAMES as f32;
@@ -120,6 +127,24 @@ fn render<B: 'static + material::Background>(
     let camera = Arc::new(camera);
     let cpus = num_cpus::get() as i32;
     let cpus = (cpus - 2).max(1);
+
+    let mut albedo_buf = FloatBuffer::new(image.width, image.height);
+    let mut normal_buf = FloatBuffer::new(image.width, image.height);
+
+    for y in 0..image.height {
+        for x in 0..image.width {
+            let u = (x as f32) / ((image.width - 1) as f32);
+            let v = (y as f32) / ((image.height - 1) as f32);
+            let ray = camera.ray(u, v);
+            let (albedo, normal) = camera.albedo_normal(&*world, ray);
+
+            albedo_buf.set((x, y), albedo);
+            normal_buf.set((x, y), normal);
+        }
+    }
+
+    image.set_albedo(albedo_buf);
+    image.set_normal(normal_buf);
 
     let mut handles = Vec::new();
     for i in 0..cpus {
@@ -200,10 +225,38 @@ fn run(event_loop: EventLoop<UserEvent>, image: Arc<Image>) -> ! {
     let vertex_buffer =
         glium::VertexBuffer::new(&display, &QUAD).expect("Unable to create vertex buffer");
 
-    let mut display_depth = false;
+    let mut display_mode = DisplayMode::Default;
+    let event_proxy = event_loop.create_proxy();
+
+    let mut texture = None;
 
     event_loop.run(move |event, _window, control_flow| match event {
         Event::UserEvent(UserEvent::Update) => {
+            let image = image.clone();
+            let event_proxy = event_proxy.clone();
+            std::thread::spawn(move || {
+                if let Ok(_) = PIXEL_UPDATE_FLAG.compare_exchange(
+                    false,
+                    true,
+                    AtomicOrdering::Acquire,
+                    AtomicOrdering::Relaxed,
+                ) {
+                    let image_bytes = image.to_rgb_bytes(display_mode);
+                    if let Err(err) = event_proxy.send_event(UserEvent::Redraw(image_bytes)) {
+                        eprintln!("{}", err);
+                    }
+                    PIXEL_UPDATE_FLAG.store(false, AtomicOrdering::Release);
+                }
+            });
+        }
+        Event::UserEvent(UserEvent::Redraw(frame)) => {
+            let data = glium::texture::RawImage2d {
+                data: frame.into(),
+                width: image.width as u32,
+                height: image.height as u32,
+                format: glium::texture::ClientFormat::U8U8U8,
+            };
+            texture = Some(SrgbTexture2d::new(&display, data).expect("Unable to create texture"));
             display.gl_window().window().request_redraw();
         }
         Event::WindowEvent {
@@ -233,39 +286,102 @@ fn run(event_loop: EventLoop<UserEvent>, image: Arc<Image>) -> ! {
                         .unwrap_or_else(|e| e.duration())
                         .as_secs()
                 );
-                image.dump(&path);
+                image.dump(&path, display_mode);
                 println!("Image saved to: {}", path);
             }
-            VirtualKeyCode::D => {
-                display_depth = !display_depth;
-                display.gl_window().window().request_redraw();
+            VirtualKeyCode::Key1 => {
+                display_mode = DisplayMode::Default;
+                event_proxy
+                    .send_event(UserEvent::Update)
+                    .expect("Unable to reach event loop");
+            }
+            VirtualKeyCode::Key2 => {
+                display_mode = DisplayMode::Denoise;
+                event_proxy
+                    .send_event(UserEvent::Update)
+                    .expect("Unable to reach event loop");
+            }
+            VirtualKeyCode::Key3 => {
+                display_mode = DisplayMode::Depth;
+                event_proxy
+                    .send_event(UserEvent::Update)
+                    .expect("Unable to reach event loop");
+            }
+            VirtualKeyCode::Key4 => {
+                display_mode = DisplayMode::Albedo;
+                event_proxy
+                    .send_event(UserEvent::Update)
+                    .expect("Unable to reach event loop");
+            }
+            VirtualKeyCode::Key5 => {
+                display_mode = DisplayMode::Normal;
+                event_proxy
+                    .send_event(UserEvent::Update)
+                    .expect("Unable to reach event loop");
             }
             _ => (),
         },
         Event::RedrawRequested(_) => {
-            let tex = image.fill(&display, display_depth);
-            let mut frame = display.draw();
+            if let Some(texture) = texture.as_ref() {
+                let mut frame = display.draw();
 
-            frame.clear_color(0.0, 0.0, 0.0, 1.0);
+                frame.clear_color(0.0, 0.0, 0.0, 1.0);
 
-            let uniforms = uniform! {
-                quad_texture: tex.sampled()
-            };
+                let uniforms = uniform! {
+                    quad_texture: texture.sampled()
+                };
 
-            frame
-                .draw(
-                    &vertex_buffer,
-                    glium::index::NoIndices(glium::index::PrimitiveType::TriangleStrip),
-                    &program,
-                    &uniforms,
-                    &DrawParameters::default(),
-                )
-                .expect("Unable to draw frame");
+                frame
+                    .draw(
+                        &vertex_buffer,
+                        glium::index::NoIndices(glium::index::PrimitiveType::TriangleStrip),
+                        &program,
+                        &uniforms,
+                        &DrawParameters::default(),
+                    )
+                    .expect("Unable to draw frame");
 
-            frame.finish().expect("Unable to finish frame");
+                frame.finish().expect("Unable to finish frame");
+            }
         }
         _ => (),
     });
+}
+
+#[derive(Copy, Clone, PartialEq)]
+enum DisplayMode {
+    Default,
+    Denoise,
+    Depth,
+    Albedo,
+    Normal,
+}
+
+struct FloatBuffer {
+    pixels: Vec<f32>,
+    width: u32,
+    height: u32,
+}
+
+impl FloatBuffer {
+    fn new(width: u32, height: u32) -> Self {
+        Self {
+            pixels: vec![0.0; (width * height) as usize * 3],
+            width,
+            height,
+        }
+    }
+
+    fn set(&mut self, position: (u32, u32), color: V3) {
+        let index = ((position.1 * self.width * 3) + (position.0 * 3)) as usize;
+        self.pixels[index + 0] = color.x();
+        self.pixels[index + 1] = color.y();
+        self.pixels[index + 2] = color.z();
+    }
+
+    fn as_slice(&self) -> &[f32] {
+        &*self.pixels
+    }
 }
 
 struct ImageBuffer {
@@ -290,18 +406,30 @@ impl ImageBuffer {
 }
 
 struct Image {
-    pixels: std::sync::Mutex<(u32, Vec<(V3, u32)>)>,
+    pixels: Mutex<(u32, Vec<(V3, u32)>)>,
     width: u32,
     height: u32,
+    albedo: Mutex<Option<FloatBuffer>>,
+    normal: Mutex<Option<FloatBuffer>>,
 }
 
 impl Image {
     fn new(width: u32, height: u32) -> Self {
         Image {
-            pixels: std::sync::Mutex::new((0, vec![(V3::zero(), 0); (width * height) as usize])),
+            pixels: Mutex::new((0, vec![(V3::zero(), 0); (width * height) as usize])),
             width,
             height,
+            albedo: Mutex::new(None),
+            normal: Mutex::new(None),
         }
+    }
+
+    fn set_albedo(&self, albedo: FloatBuffer) {
+        *self.albedo.lock().unwrap() = Some(albedo);
+    }
+
+    fn set_normal(&self, normal: FloatBuffer) {
+        *self.normal.lock().unwrap() = Some(normal);
     }
 
     fn buffer(&self) -> ImageBuffer {
@@ -319,44 +447,117 @@ impl Image {
         pixels.0 += 1;
     }
 
-    fn to_rgba_bytes(&self, show_depth: bool) -> Vec<u8> {
+    fn to_rgb_bytes(&self, mode: DisplayMode) -> Vec<u8> {
         let pixels = self.pixels.lock().unwrap();
         if pixels.0 == 0 {
-            let mut pixel_bytes = Vec::with_capacity(pixels.1.len() * 4);
+            let mut pixel_bytes = Vec::with_capacity(pixels.1.len() * 3);
             for _ in 0..pixels.1.len() {
                 pixel_bytes.push(0);
                 pixel_bytes.push(0);
                 pixel_bytes.push(0);
-                pixel_bytes.push(255);
             }
             pixel_bytes
         } else {
-            let mut pixel_bytes = Vec::with_capacity(pixels.1.len() * 4);
             let scale = 1.0 / pixels.0 as f32;
-            let component = |f_c: f32| ((scale * f_c).sqrt().min(1.0).max(0.0) * 255.0) as u8;
+            let component = |f_c: f32| ((scale * f_c).powf(1.0 / 2.2).min(1.0).max(0.0));
+            let mut pixel_floats = Vec::with_capacity(pixels.1.len() * 3);
 
-            if show_depth {
-                let max_depth = pixels.1.iter().map(|p| p.1).max().unwrap_or(1).max(1);
-                let max_depth = max_depth as f32 * scale;
-                for (_color, depth) in pixels.1.iter() {
-                    let depth =
-                        (((*depth as f32 * scale) / max_depth).max(0.0).min(1.0) * 255.0) as u8;
-                    pixel_bytes.push(depth);
-                    pixel_bytes.push(depth);
-                    pixel_bytes.push(depth);
-                    pixel_bytes.push(255);
+            let pixel_floats = match mode {
+                DisplayMode::Depth => {
+                    let max_depth = pixels.1.iter().map(|p| p.1).max().unwrap_or(1).max(1);
+                    let max_depth = max_depth as f32 * scale;
+                    for (_color, depth) in pixels.1.iter() {
+                        let depth =
+                            (((*depth as f32 * scale) / max_depth).max(0.0).min(1.0)) as f32;
+                        pixel_floats.push(depth);
+                        pixel_floats.push(depth);
+                        pixel_floats.push(depth);
+                    }
+
+                    pixel_floats
                 }
-            } else {
-                for (color, _depth) in pixels.1.iter() {
-                    pixel_bytes.push(component(color.x()));
-                    pixel_bytes.push(component(color.y()));
-                    pixel_bytes.push(component(color.z()));
-                    pixel_bytes.push(255);
+                DisplayMode::Default => {
+                    for (color, _depth) in pixels.1.iter() {
+                        pixel_floats.push(component(color.x()));
+                        pixel_floats.push(component(color.y()));
+                        pixel_floats.push(component(color.z()));
+                    }
+                    pixel_floats
                 }
-            }
-            pixel_bytes
+                DisplayMode::Denoise => {
+                    for (color, _depth) in pixels.1.iter() {
+                        pixel_floats.push(component(color.x()));
+                        pixel_floats.push(component(color.y()));
+                        pixel_floats.push(component(color.z()));
+                    }
+                    self.denoise(&mut pixel_floats);
+                    pixel_floats
+                }
+                DisplayMode::Albedo => {
+                    let albedo = self.albedo.lock();
+                    if let Ok(Some(albedo)) = albedo.as_deref() {
+                        for p in albedo.as_slice() {
+                            pixel_floats.push(p.min(1.0).max(0.0).powf(1.0 / 2.2));
+                        }
+                    } else {
+                        for _ in 0..pixels.1.len() {
+                            pixel_floats.push(0.0);
+                            pixel_floats.push(0.0);
+                            pixel_floats.push(0.0);
+                        }
+                    }
+
+                    pixel_floats
+                }
+                DisplayMode::Normal => {
+                    let normal = self.normal.lock();
+                    if let Ok(Some(normal)) = normal.as_deref() {
+                        for p in normal.as_slice() {
+                            pixel_floats.push((p + 1.0) / 2.0);
+                        }
+                    } else {
+                        for _ in 0..pixels.1.len() {
+                            pixel_floats.push(0.0);
+                            pixel_floats.push(0.0);
+                            pixel_floats.push(0.0);
+                        }
+                    }
+
+                    pixel_floats
+                }
+            };
+
+            pixel_floats
+                .into_iter()
+                .map(|p| (p * 255.0) as u8)
+                .collect()
         }
     }
+
+    #[cfg(feature = "denoise")]
+    fn denoise(&self, pixels: &mut [f32]) {
+        let albedo = self.albedo.lock();
+        let normal = self.normal.lock();
+        let device = oidn::Device::new();
+        if let (Ok(Some(albedo)), Ok(Some(normal))) = (albedo.as_deref(), normal.as_deref()) {
+            oidn::RayTracing::new(&device)
+                .image_dimensions(self.width as usize, self.height as usize)
+                .srgb(true)
+                .clean_aux(true)
+                .albedo_normal(albedo.as_slice(), normal.as_slice())
+                .filter_in_place(pixels)
+                .expect("unable to denoise filter");
+        } else {
+            oidn::RayTracing::new(&device)
+                .image_dimensions(self.width as usize, self.height as usize)
+                .srgb(true)
+                .filter_in_place(pixels)
+                .expect("unable to denoise filter");
+        };
+    }
+
+    #[cfg(not(feature = "denoise"))]
+    fn denoise(&self, pixels: &mut [f32]) {}
 
     fn clear(&self) {
         let mut pixels = self.pixels.lock().unwrap();
@@ -369,25 +570,11 @@ impl Image {
         pixels.0 = 0;
     }
 
-    fn fill<F: Facade>(&self, display: &F, show_depth: bool) -> SrgbTexture2d {
-        let pixel_bytes = self.to_rgba_bytes(show_depth);
-
-        let data = glium::texture::RawImage2d {
-            data: pixel_bytes.into(),
-            width: self.width as u32,
-            height: self.height as u32,
-            format: glium::texture::ClientFormat::U8U8U8U8,
-        };
-        let texture = SrgbTexture2d::new(display, data).expect("Unable to create texture");
-
-        texture
-    }
-
-    fn dump<P: AsRef<std::path::Path>>(&self, path: P) {
+    fn dump<P: AsRef<std::path::Path>>(&self, path: P, mode: DisplayMode) {
         let path = path.as_ref();
-        let pixel_bytes = self.to_rgba_bytes(false);
+        let pixel_bytes = self.to_rgb_bytes(mode);
         let pixel_bytes: Vec<u8> = pixel_bytes
-            .chunks(4 * self.width as usize)
+            .chunks(3 * self.width as usize)
             .rev()
             .flat_map(|c| c)
             .map(|p| *p)
@@ -400,7 +587,7 @@ impl Image {
             &pixel_bytes,
             self.width,
             self.height,
-            image::ColorType::Rgba8,
+            image::ColorType::Rgb8,
             image::ImageFormat::Png,
         );
         if let Err(error) = r {

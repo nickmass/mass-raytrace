@@ -17,7 +17,10 @@ pub struct EveFilter;
 impl ObjGroupFilter for EveFilter {
     fn include_group(&self, group_name: Option<&str>) -> bool {
         if let Some(group_name) = group_name {
-            let include = ["Hull", "Glass", "exhaust", "Exhaust"].contains(&group_name);
+            let include = [
+                "Hull", "hull", "Glass", "glass", "DarkHull", "exhaust", "Exhaust",
+            ]
+            .contains(&group_name);
 
             if !include {
                 println!("obj discarding: {}", group_name);
@@ -235,9 +238,11 @@ pub enum Hull {
     Avatar,
     Buzzard,
     Crow,
+    Nestor,
     Orca,
     Raven,
     Rifter,
+    Stratios,
     Venture,
 }
 
@@ -307,6 +312,28 @@ pub fn load_ship(hull: Hull) -> crate::geom::Model<EveMaterial> {
             )
             .unwrap();
             let model = "models/soef1_t1/SoEF1_TShape1.obj";
+            (material, model)
+        }
+        Hull::Stratios => {
+            let material = EveMaterial::new(
+                "models/soec1_t1/soec1_t1_no.png",
+                "models/soec1_t1/soec1_t1_ar.png",
+                "models/soec1_t1/soec1_t1_pmdg.png",
+                EveMaterialColor::soe(),
+            )
+            .unwrap();
+            let model = "models/soec1_t1/SoEC1_TShape1.obj";
+            (material, model)
+        }
+        Hull::Nestor => {
+            let material = EveMaterial::new(
+                "models/soeb1_t1/soeb1_t1_no.png",
+                "models/soeb1_t1/soeb1_t1_ar.png",
+                "models/soeb1_t1/soeb1_t1_pmdg.png",
+                EveMaterialColor::soe(),
+            )
+            .unwrap();
+            let model = "models/soeb1_t1/SoEB1_TShape2.obj";
             (material, model)
         }
         Hull::Orca => {
