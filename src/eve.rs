@@ -6,7 +6,7 @@ use super::material::{
 };
 
 use crate::obj_loader::ObjGroupFilter;
-use crate::texture::{Surface, Texture, YCbCrTexture};
+use crate::texture::{SolidColor, Surface, Texture, WrapMode, YCbCrTexture};
 use crate::{
     math::{V2, V3},
     texture::{BlendMode, TextureBlend},
@@ -52,9 +52,9 @@ impl EveMaterial {
         pmdg: P,
         colors: EveMaterialColor,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let normal_occlusion = Texture::load_png(no)?;
-        let albedo_roughness = Texture::load_png(ar)?;
-        let pmdg = Texture::load_png(pmdg)?;
+        let normal_occlusion = Texture::load_png(no, WrapMode::Repeat)?;
+        let albedo_roughness = Texture::load_png(ar, WrapMode::Repeat)?;
+        let pmdg = Texture::load_png(pmdg, WrapMode::Repeat)?;
 
         let inner = InnerEveMaterial {
             normal_occlusion,
@@ -140,6 +140,8 @@ impl Material for EveMaterial {
             let color = (((albedo * material_color * (1.0 - paint)) + (albedo * paint))
                 * (1.0 - dirt.min(1.0)))
                 + (V3::new(0.01, 0.005, 0.0) * dirt);
+
+            let color = SolidColor(color.expand(1.0));
 
             Mix::new(
                 (roughness + dirt).min(1.0),
@@ -232,6 +234,7 @@ impl EveMaterialColor {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Copy, Clone)]
 pub enum Hull {
     Astero,
@@ -246,7 +249,7 @@ pub enum Hull {
     Venture,
 }
 
-pub fn load_ship(hull: Hull) -> crate::geom::Model<EveMaterial> {
+pub fn load_ship(hull: Hull) -> crate::geom::Model<()> {
     let (material, model) = match hull {
         Hull::Venture => {
             let material = EveMaterial::new(
@@ -362,19 +365,18 @@ pub fn load_ship(hull: Hull) -> crate::geom::Model<EveMaterial> {
 
     let tris = crate::obj_loader::ObjLoader::load(
         model,
-        &EveFilter,
-        V3::new,
-        V3::new,
-        V2::new,
-        |a, b, c| crate::geom::Triangle::with_norms_and_uvs(material.clone(), a, b, c),
+        crate::obj_loader::obj_fns(V3::new, V3::new, V2::new, |a, b, c| {
+            crate::geom::Triangle::with_norms_and_uvs(material.clone(), a, b, c)
+        })
+        .with_filter(EveFilter),
     )
     .unwrap();
 
-    crate::geom::Model::new(material, tris)
+    crate::geom::Model::new(tris)
 }
 
 pub fn environment(name: &str, rotation: V3) -> impl Background {
-    let stars = Texture::load_png("models/environments/stars01_tile2.png")
+    let stars = Texture::load_png("models/environments/stars01_tile2.png", WrapMode::Repeat)
         .unwrap()
         .shared();
     let cube_dir = |index| {
@@ -382,7 +384,7 @@ pub fn environment(name: &str, rotation: V3) -> impl Background {
         let chroma = format!("models/environments/{}/{}_chroma.png", name, index);
 
         let stars = stars.clone();
-        let nebula = YCbCrTexture::load_png(luma, chroma).unwrap();
+        let nebula = YCbCrTexture::load_png(luma, chroma, WrapMode::Repeat).unwrap();
 
         TextureBlend::new(BlendMode::Addition, stars, nebula)
     };

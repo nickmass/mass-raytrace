@@ -1,4 +1,3 @@
-use glium::backend::Facade;
 use glium::glutin;
 use glium::texture::SrgbTexture2d;
 use glium::{implement_vertex, uniform, DrawParameters, Program, Surface};
@@ -33,6 +32,7 @@ enum UserEvent {
     Update,
     Complete,
     Redraw(Vec<u8>),
+    FatalError,
 }
 
 const MAX_DEPTH: u32 = 150;
@@ -56,7 +56,17 @@ fn main() {
 
     {
         let image = image.clone();
-        std::thread::spawn(|| worker(image, event_proxy));
+        std::thread::spawn(move || {
+            let res = std::panic::catch_unwind(|| worker(image, event_proxy.clone()));
+            match res {
+                Err(_err) => event_proxy
+                    .lock()
+                    .expect("event proxy poisioned")
+                    .send_event(UserEvent::FatalError)
+                    .expect("event loop disconnected"),
+                _ => (),
+            }
+        });
     }
 
     run(event_loop, image)
@@ -79,6 +89,10 @@ fn worker(image: Arc<Image>, event_proxy: Arc<Mutex<EventLoopProxy<UserEvent>>>)
         let animation_t = frame as f32 / TOTAL_FRAMES as f32;
 
         let (mut world, camera) = scenes::cornell_box(animation_t, ASPECT_RATIO);
+        //let (mut world, camera) = scenes::mario(animation_t, ASPECT_RATIO);
+        //let (mut world, camera) = scenes::sphere_grid(animation_t, ASPECT_RATIO);
+        //let (mut world, camera) = scenes::scratchpad(animation_t, ASPECT_RATIO);
+        //let (mut world, camera) = scenes::lucy(animation_t, ASPECT_RATIO);
 
         world.build_bvh();
 
@@ -258,6 +272,10 @@ fn run(event_loop: EventLoop<UserEvent>, image: Arc<Image>) -> ! {
             };
             texture = Some(SrgbTexture2d::new(&display, data).expect("Unable to create texture"));
             display.gl_window().window().request_redraw();
+        }
+        Event::UserEvent(UserEvent::FatalError) => {
+            eprintln!("Render thread panic");
+            *control_flow = ControlFlow::Exit;
         }
         Event::WindowEvent {
             event: WindowEvent::CloseRequested,
@@ -543,7 +561,7 @@ impl Image {
             oidn::RayTracing::new(&device)
                 .image_dimensions(self.width as usize, self.height as usize)
                 .srgb(true)
-                .clean_aux(true)
+                .clean_aux(false)
                 .albedo_normal(albedo.as_slice(), normal.as_slice())
                 .filter_in_place(pixels)
                 .expect("unable to denoise filter");

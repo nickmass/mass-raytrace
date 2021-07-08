@@ -16,17 +16,21 @@ pub trait Surface: Send + Sync {
     fn get_f(&self, index: V2) -> V4;
 }
 
-type SharedTexture = Arc<Texture>;
+pub type SharedTexture = Arc<Texture>;
 
 #[derive(Debug, Clone)]
 pub struct Texture {
     width: u32,
     height: u32,
     pixels: Vec<V4>,
+    wrapping: WrapMode,
 }
 
 impl Texture {
-    pub fn load_png<P: AsRef<Path>>(path: P) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn load_png<P: AsRef<Path>>(
+        path: P,
+        wrapping: WrapMode,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let path = path.as_ref();
 
         let file = BufReader::new(File::open(path)?);
@@ -60,6 +64,7 @@ impl Texture {
             width,
             height,
             pixels,
+            wrapping,
         })
     }
 
@@ -86,12 +91,9 @@ impl Surface for Texture {
     }
 
     fn get_f(&self, index: V2) -> V4 {
+        let index = self.wrapping.wrap(index);
         let x = index.x();
         let y = index.y();
-        let x = if x < 0.0 { 1.0 - x.abs().fract() } else { x };
-        let y = if y < 0.0 { 1.0 - y.abs().fract() } else { y };
-        let x = if x == 1.0 { 1.0 } else { x.fract() };
-        let y = if y == 1.0 { 1.0 } else { y.fract() };
 
         let x = x * (self.width() - 1) as f32;
         let y = y * (self.height() - 1) as f32;
@@ -113,17 +115,48 @@ impl Surface for Texture {
     }
 }
 
-impl Surface for SharedTexture {
+impl<S: Surface + ?Sized> Surface for Arc<S> {
     fn width(&self) -> u32 {
-        Texture::width(self)
+        (**self).width()
     }
 
     fn height(&self) -> u32 {
-        Texture::height(self)
+        (**self).height()
     }
 
     fn get_f(&self, index: V2) -> V4 {
-        Texture::get_f(self, index)
+        (**self).get_f(index)
+    }
+}
+
+impl<S: Surface + ?Sized> Surface for Box<S> {
+    fn width(&self) -> u32 {
+        (**self).width()
+    }
+
+    fn height(&self) -> u32 {
+        (**self).height()
+    }
+
+    fn get_f(&self, index: V2) -> V4 {
+        (**self).get_f(index)
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct SolidColor(pub V4);
+
+impl Surface for SolidColor {
+    fn width(&self) -> u32 {
+        1
+    }
+
+    fn height(&self) -> u32 {
+        1
+    }
+
+    fn get_f(&self, _index: V2) -> V4 {
+        self.0
     }
 }
 
@@ -147,9 +180,10 @@ impl YCbCrTexture {
     pub fn load_png<P: AsRef<Path>>(
         luma: P,
         chroma: P,
+        wrapping: WrapMode,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let luma = Texture::load_png(luma)?;
-        let chroma = Texture::load_png(chroma)?;
+        let luma = Texture::load_png(luma, wrapping)?;
+        let chroma = Texture::load_png(chroma, wrapping)?;
 
         Ok(Self { luma, chroma })
     }
@@ -180,6 +214,7 @@ impl Surface for YCbCrTexture {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
 pub enum BlendMode {
     Lighten,
@@ -195,6 +230,38 @@ impl BlendMode {
             BlendMode::Darken => left.min(right),
             BlendMode::Addition => (left + right).min(V4::one()),
             BlendMode::Subtraction => (left - right).max(V4::zero()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum WrapMode {
+    Mirror,
+    Repeat,
+    Clamp,
+}
+
+impl WrapMode {
+    fn wrap(&self, orig: V2) -> V2 {
+        match self {
+            WrapMode::Mirror => {
+                unimplemented!("Mirror wrapping is not implemented")
+            }
+            WrapMode::Repeat => {
+                let x = orig.x();
+                let y = orig.y();
+                let x = if x < 0.0 { 1.0 - x.abs().fract() } else { x };
+                let y = if y < 0.0 { 1.0 - y.abs().fract() } else { y };
+                let x = if x > 1.0 { x.fract() } else { x };
+                let y = if y > 1.0 { y.fract() } else { y };
+                V2::new(x, y)
+            }
+            WrapMode::Clamp => {
+                let x = orig.x().min(1.0).max(0.0);
+                let y = orig.y().min(1.0).max(0.0);
+
+                V2::new(x, y)
+            }
         }
     }
 }

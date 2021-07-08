@@ -20,6 +20,10 @@ pub trait Material: Send + Sync {
     fn normal(&self, _uv: V2) -> Option<V3> {
         None
     }
+
+    fn alpha_test(&self, uv: V2) -> bool {
+        true
+    }
 }
 
 pub trait Background: Send + Sync {
@@ -180,17 +184,17 @@ impl<S: Surface> Background for CubeMap<S> {
 }
 
 #[derive(Copy, Clone)]
-pub struct Lambertian {
-    albedo: V3,
+pub struct Lambertian<S: Surface> {
+    surface: S,
 }
 
-impl Lambertian {
-    pub fn new(albedo: V3) -> Self {
-        Self { albedo }
+impl<S: Surface> Lambertian<S> {
+    pub fn new(surface: S) -> Self {
+        Self { surface }
     }
 }
 
-impl Material for Lambertian {
+impl<S: Surface> Material for Lambertian<S> {
     fn scatter(&self, _ray: Ray, hit: &Hit) -> Option<Scatter> {
         let scatter_direction = hit.normal + V3::random_unit_vector();
         let scatter_direction = if scatter_direction.near_zero() {
@@ -201,10 +205,16 @@ impl Material for Lambertian {
 
         let scattered = Ray::new(hit.point, scatter_direction);
 
+        let attenuation = self.surface.get_f(hit.uv.unwrap_or(V2::zero())).contract();
+
         Some(Scatter {
             scattered,
-            attenuation: self.albedo,
+            attenuation,
         })
+    }
+
+    fn alpha_test(&self, uv: V2) -> bool {
+        self.surface.get_f(uv).w() != 0.0
     }
 }
 
@@ -230,19 +240,19 @@ impl Material for DiffuseLight {
 }
 
 #[derive(Copy, Clone)]
-pub struct Metal {
+pub struct Metal<S: Surface> {
     fuzz: f32,
-    albedo: V3,
+    surface: S,
 }
 
-impl Metal {
-    pub fn new(fuzz: f32, albedo: V3) -> Self {
+impl<S: Surface> Metal<S> {
+    pub fn new(fuzz: f32, surface: S) -> Self {
         let fuzz = if fuzz < 1.0 { fuzz } else { 1.0 };
-        Self { fuzz, albedo }
+        Self { fuzz, surface }
     }
 }
 
-impl Material for Metal {
+impl<S: Surface> Material for Metal<S> {
     fn scatter(&self, ray: Ray, hit: &Hit) -> Option<Scatter> {
         let reflected = ray.direction.unit().reflect(hit.normal);
         let scattered = Ray::new(
@@ -251,13 +261,19 @@ impl Material for Metal {
         );
 
         if scattered.direction.dot(hit.normal) > 0.0 {
+            let attenuation = self.surface.get_f(hit.uv.unwrap_or(V2::zero())).contract();
+
             Some(Scatter {
                 scattered,
-                attenuation: self.albedo,
+                attenuation,
             })
         } else {
             None
         }
+    }
+
+    fn alpha_test(&self, uv: V2) -> bool {
+        self.surface.get_f(uv).w() != 0.0
     }
 }
 
@@ -307,14 +323,14 @@ impl Material for Dielectric {
 }
 
 #[derive(Copy, Clone)]
-pub struct Specular {
+pub struct Specular<S: Surface> {
     refraction_index: f32,
-    inner: Lambertian,
+    inner: Lambertian<S>,
 }
 
-impl Specular {
-    pub fn new(refraction_index: f32, albedo: V3) -> Self {
-        let mat = Lambertian::new(albedo);
+impl<S: Surface> Specular<S> {
+    pub fn new(refraction_index: f32, surface: S) -> Self {
+        let mat = Lambertian::new(surface);
         Self {
             refraction_index,
             inner: mat,
@@ -327,7 +343,7 @@ impl Specular {
     }
 }
 
-impl Material for Specular {
+impl<S: Surface> Material for Specular<S> {
     fn scatter(&self, ray: Ray, hit: &Hit) -> Option<Scatter> {
         let attenuation = V3::fill(1.0);
         let refraction_ratio = if hit.front_face {
@@ -353,6 +369,10 @@ impl Material for Specular {
             attenuation,
             scattered: Ray::new(hit.point, direction),
         })
+    }
+
+    fn alpha_test(&self, uv: V2) -> bool {
+        self.inner.alpha_test(uv)
     }
 }
 
@@ -388,5 +408,32 @@ impl<MLeft: Material, MRight: Material> Material for Mix<MLeft, MRight> {
         } else {
             self.right.emit(hit)
         }
+    }
+
+    fn alpha_test(&self, uv: V2) -> bool {
+        if f32::rand() < self.ratio {
+            self.left.alpha_test(uv)
+        } else {
+            self.right.alpha_test(uv)
+        }
+    }
+}
+
+pub struct Isotrophic {
+    albedo: V3,
+}
+
+impl Isotrophic {
+    pub fn new(albedo: V3) -> Self {
+        Self { albedo }
+    }
+}
+
+impl Material for Isotrophic {
+    fn scatter(&self, _ray: Ray, hit: &Hit) -> Option<Scatter> {
+        Some(Scatter {
+            attenuation: self.albedo,
+            scattered: Ray::new(hit.point, V3::random_in_unit_sphere()),
+        })
     }
 }

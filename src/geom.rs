@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use super::material::{Material, Scatter};
+use super::material::{Isotrophic, Material, Scatter};
 use super::world::Ray;
-use crate::math::{M4, V2, V3};
+use crate::math::{Num, M4, V2, V3};
 
 pub struct Hit<'a> {
     pub point: V3,
@@ -273,12 +273,27 @@ impl BoundingBox {
 }
 
 pub struct Model<M: Material> {
-    pub material: M,
+    material: Option<M>,
     triangles: Arc<BvhNode>,
 }
 
+impl Model<()> {
+    pub fn new<T: IntoIterator<Item = Triangle<TM>>, TM: 'static + Material>(triangles: T) -> Self {
+        let triangles = triangles
+            .into_iter()
+            .map(|t| Box::new(t) as Box<dyn Intersect>)
+            .collect();
+        let triangles = Arc::new(BvhNode::new(triangles));
+
+        Self {
+            triangles,
+            material: None,
+        }
+    }
+}
+
 impl<M: 'static + Clone + Material> Model<M> {
-    pub fn new<T: IntoIterator<Item = Triangle<TM>>, TM: 'static + Material>(
+    pub fn with_material<T: IntoIterator<Item = Triangle<TM>>, TM: 'static + Material>(
         material: M,
         triangles: T,
     ) -> Self {
@@ -290,24 +305,12 @@ impl<M: 'static + Clone + Material> Model<M> {
 
         Self {
             triangles,
-            material,
+            material: Some(material),
         }
     }
 
-    pub fn instance<IM: Material>(
-        &self,
-        material: IM,
-        translation: V3,
-        rotation: V3,
-        scale: V3,
-    ) -> Instance<IM> {
-        Instance::new(
-            self.triangles.clone(),
-            material,
-            translation,
-            rotation,
-            scale,
-        )
+    pub fn instance(&self, translation: V3, rotation: V3, scale: V3) -> Instance<()> {
+        Instance::new(self.triangles.clone(), translation, rotation, scale)
     }
 }
 
@@ -315,7 +318,9 @@ impl<M: Material> Intersect for Model<M> {
     fn intersect(&self, ray: Ray, t_min: f32, t_max: f32) -> Option<Hit<'_>> {
         let hit = self.triangles.intersect(ray, t_min, t_max);
         if let Some(mut hit) = hit {
-            hit.material = &self.material;
+            if let Some(material) = self.material.as_ref() {
+                hit.material = material;
+            }
             Some(hit)
         } else {
             None
@@ -329,20 +334,14 @@ impl<M: Material> Intersect for Model<M> {
 
 pub struct Instance<M: Material> {
     triangles: Arc<BvhNode>,
-    material: M,
+    material: Option<M>,
     transform: M4,
     inv_transform: M4,
     bounding_box: BoundingBox,
 }
 
 impl<M: Material> Instance<M> {
-    pub fn new(
-        triangles: Arc<BvhNode>,
-        material: M,
-        translation: V3,
-        rotation: V3,
-        scale: V3,
-    ) -> Self {
+    pub fn new(triangles: Arc<BvhNode>, translation: V3, rotation: V3, scale: V3) -> Self {
         let inv_translation = translation * -1.0;
         let inv_rotation = rotation * -1.0;
         let inv_scale = 1.0 / scale;
@@ -383,10 +382,20 @@ impl<M: Material> Instance<M> {
 
         Self {
             triangles,
-            material,
+            material: None,
             transform,
             inv_transform,
             bounding_box,
+        }
+    }
+
+    pub fn with_material<IM: Material>(self, material: IM) -> Instance<IM> {
+        Instance {
+            triangles: self.triangles,
+            material: Some(material),
+            transform: self.transform,
+            inv_transform: self.inv_transform,
+            bounding_box: self.bounding_box,
         }
     }
 }
@@ -401,7 +410,9 @@ impl<M: Material> Intersect for Instance<M> {
         if let Some(mut hit) = hit {
             hit.point = self.transform.transform_point(hit.point);
             hit.normal = self.transform.transform_vector(hit.normal).unit();
-            hit.material = &self.material;
+            if let Some(material) = self.material.as_ref() {
+                hit.material = material;
+            }
             Some(hit)
         } else {
             None
@@ -547,6 +558,12 @@ impl<M: Material> Intersect for Triangle<M> {
             (normal, None)
         };
 
+        if let Some(uv) = &uv {
+            if !self.material.alpha_test(*uv) {
+                return None;
+            }
+        }
+
         let mut hit = Hit {
             point,
             normal,
@@ -566,5 +583,72 @@ impl<M: Material> Intersect for Triangle<M> {
         let max = self.vertex_a.max(self.vertex_b).max(self.vertex_c);
 
         Some(BoundingBox::new(min, max))
+    }
+}
+
+pub struct Volume<I: Intersect> {
+    neg_inv_density: f32,
+    target: I,
+    material: Isotrophic,
+}
+
+impl<I: Intersect> Volume<I> {
+    pub fn new(target: I, density: f32, albedo: V3) -> Self {
+        Self {
+            target,
+            neg_inv_density: -1.0 / density,
+            material: Isotrophic::new(albedo),
+        }
+    }
+}
+
+impl<I: Intersect> Intersect for Volume<I> {
+    fn intersect(&self, ray: Ray, t_min: f32, t_max: f32) -> Option<Hit<'_>> {
+        let mut hit_enter = self
+            .target
+            .intersect(ray, f32::NEG_INFINITY, f32::INFINITY)?;
+
+        let mut hit_exit = self
+            .target
+            .intersect(ray, hit_enter.t + 0.0001, f32::INFINITY)?;
+
+        if hit_enter.t < t_min {
+            hit_enter.t = t_min;
+        }
+        if hit_exit.t > t_max {
+            hit_exit.t = t_max;
+        }
+
+        if hit_enter.t >= hit_exit.t {
+            return None;
+        }
+
+        if hit_enter.t < 0.0 {
+            hit_enter.t = 0.0;
+        }
+
+        let ray_length = ray.direction.length();
+        let distince_inside_target = (hit_exit.t - hit_enter.t) * ray_length;
+        let hit_distance = f32::rand().ln() * self.neg_inv_density;
+
+        if hit_distance > distince_inside_target {
+            return None;
+        }
+
+        let t = hit_enter.t + hit_distance / ray_length;
+        let hit = Hit {
+            point: ray.at(t),
+            normal: V3::new(1.0, 0.0, 0.0),
+            uv: None,
+            t,
+            front_face: true,
+            material: &self.material,
+        };
+
+        Some(hit)
+    }
+
+    fn bounding_box(&self) -> Option<BoundingBox> {
+        self.target.bounding_box()
     }
 }
