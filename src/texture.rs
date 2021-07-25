@@ -68,6 +68,39 @@ impl Texture {
         })
     }
 
+    pub fn load_bytes<I: Into<Vec<u8>>>(
+        bytes: I,
+        width: u32,
+        height: u32,
+        wrapping: WrapMode,
+    ) -> Texture {
+        let mut pixels = Vec::new();
+        let bytes = bytes.into();
+
+        let normalize_component = |c| c as f32 / 255.0;
+
+        for p in bytes.chunks_exact(4) {
+            if let &[r, g, b, a] = p {
+                let color = V4::new(
+                    normalize_component(r),
+                    normalize_component(g),
+                    normalize_component(b),
+                    normalize_component(a),
+                );
+                pixels.push(color);
+            } else {
+                unreachable!("expected 4 channel image")
+            }
+        }
+
+        Texture {
+            width,
+            height,
+            pixels,
+            wrapping,
+        }
+    }
+
     pub fn shared(self) -> SharedTexture {
         Arc::new(self)
     }
@@ -297,5 +330,31 @@ impl<L: Surface, R: Surface> Surface for TextureBlend<L, R> {
         let r = self.right.get_f(index);
 
         self.blend_mode.blend(l, r)
+    }
+}
+
+pub struct SolidColorFallback<S: Surface> {
+    color: V4,
+    surface: S,
+}
+
+impl<S: Surface> SolidColorFallback<S> {
+    pub fn new(color: V4, surface: S) -> Self {
+        Self { color, surface }
+    }
+}
+
+impl<S: Surface> Surface for SolidColorFallback<S> {
+    fn width(&self) -> u32 {
+        self.surface.width()
+    }
+
+    fn height(&self) -> u32 {
+        self.surface.width()
+    }
+
+    fn get_f(&self, index: V2) -> V4 {
+        let c = self.surface.get_f(index);
+        (self.color * (1.0 - c.w())) + (c * c.w())
     }
 }

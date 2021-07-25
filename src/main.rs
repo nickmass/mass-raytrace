@@ -1,31 +1,28 @@
-use glium::glutin;
 use glium::texture::SrgbTexture2d;
-use glium::{implement_vertex, uniform, DrawParameters, Program, Surface};
+use glium::{glutin, implement_vertex, uniform, DrawParameters, Program, Surface};
 use glutin::event_loop::EventLoopProxy;
-use winit::event::KeyboardInput;
-use winit::event::VirtualKeyCode;
-use winit::{
-    dpi::PhysicalSize,
-    event::{Event, WindowEvent},
-    event_loop::{ControlFlow, EventLoop},
-    window::WindowBuilder,
-};
+use winit::dpi::PhysicalSize;
+use winit::event::{Event, KeyboardInput, VirtualKeyCode, WindowEvent};
+use winit::event_loop::{ControlFlow, EventLoop};
+use winit::window::WindowBuilder;
 
-use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex};
-
-mod math;
-use math::{Num, V3};
 
 mod eve;
 mod geom;
 mod material;
+mod math;
 mod obj_loader;
 mod ply_loader;
 mod scenes;
 mod stl_loader;
 mod texture;
 mod world;
+
+use math::{Num, V3};
+use scenes::Scene;
 
 #[derive(Debug)]
 enum UserEvent {
@@ -35,29 +32,36 @@ enum UserEvent {
     FatalError,
 }
 
-const MAX_DEPTH: u32 = 150;
+const MAX_DEPTH: u32 = 50;
 
 const ASPECT_RATIO: f32 = 16.0 / 9.0;
-const IMAGE_WIDTH: u32 = 1920 * 2;
+const IMAGE_WIDTH: u32 = 1920;
 const IMAGE_HEIGHT: u32 = (IMAGE_WIDTH as f32 / ASPECT_RATIO) as u32;
 
 const ANIMATING: bool = false;
-const FRAMES_PER_SECOND: u32 = 24;
-const ANIMATION_DURATION: u32 = 5;
+const EXPORT_FRAMES: bool = false;
+const FRAMES_PER_SECOND: u32 = 30;
+const ANIMATION_DURATION: u32 = 150000;
 const TOTAL_FRAMES: u32 = FRAMES_PER_SECOND * ANIMATION_DURATION;
-const SAMPLES_PER_FRAME: u32 = 10;
+const SAMPLES_PER_FRAME_PER_THREAD: u32 = 100000;
+
+const READ_INPUT: bool = false;
+const WRITE_INPUT: bool = false;
 
 static PIXEL_UPDATE_FLAG: AtomicBool = AtomicBool::new(false);
+static QUICK_PASS: AtomicBool = AtomicBool::new(false);
 
 fn main() {
     let event_loop: EventLoop<UserEvent> = EventLoop::with_user_event();
     let event_proxy = Arc::new(Mutex::new(event_loop.create_proxy()));
     let image = Arc::new(Image::new(IMAGE_WIDTH, IMAGE_HEIGHT));
+    let input = Arc::new(Mutex::new(InputCollection::new()));
 
     {
         let image = image.clone();
+        let input = input.clone();
         std::thread::spawn(move || {
-            let res = std::panic::catch_unwind(|| worker(image, event_proxy.clone()));
+            let res = std::panic::catch_unwind(|| worker(image, event_proxy.clone(), input));
             match res {
                 Err(_err) => event_proxy
                     .lock()
@@ -69,30 +73,39 @@ fn main() {
         });
     }
 
-    run(event_loop, image)
+    run(event_loop, image, input)
 }
 
-fn worker(image: Arc<Image>, event_proxy: Arc<Mutex<EventLoopProxy<UserEvent>>>) {
+fn worker(
+    image: Arc<Image>,
+    event_proxy: Arc<Mutex<EventLoopProxy<UserEvent>>>,
+    input: Arc<Mutex<InputCollection>>,
+) {
     fastrand::seed(1);
 
     let mut frame = 0;
     let samples_per_frame = if ANIMATING {
-        Some(SAMPLES_PER_FRAME)
+        Some(SAMPLES_PER_FRAME_PER_THREAD)
     } else {
         None
     };
 
     let start_time = std::time::Instant::now();
-    while frame < TOTAL_FRAMES {
-        image.clear();
 
+    let mut scene = scenes::CornellBox::new(ASPECT_RATIO);
+    //let mut scene = scenes::Eve::new(ASPECT_RATIO);
+    //let mut scene = scenes::Lucy::new(ASPECT_RATIO);
+    //let mut scene = scenes::Mario::new(ASPECT_RATIO, READ_INPUT, WRITE_INPUT);
+    //let mut scene = scenes::Menger::new(ASPECT_RATIO);
+    //let mut scene = scenes::SphereGrid::new(ASPECT_RATIO);
+
+    while frame < TOTAL_FRAMES {
         let animation_t = frame as f32 / TOTAL_FRAMES as f32;
 
-        let (mut world, camera) = scenes::cornell_box(animation_t, ASPECT_RATIO);
-        //let (mut world, camera) = scenes::mario(animation_t, ASPECT_RATIO);
-        //let (mut world, camera) = scenes::sphere_grid(animation_t, ASPECT_RATIO);
-        //let (mut world, camera) = scenes::scratchpad(animation_t, ASPECT_RATIO);
-        //let (mut world, camera) = scenes::lucy(animation_t, ASPECT_RATIO);
+        let (mut world, camera) = {
+            let input = input.lock().unwrap();
+            scene.generate(animation_t, frame, &*input)
+        };
 
         world.build_bvh();
 
@@ -104,10 +117,12 @@ fn worker(image: Arc<Image>, event_proxy: Arc<Mutex<EventLoopProxy<UserEvent>>>)
 
         frame += 1;
         if ANIMATING {
-            image.dump(
-                format!("animation/frame_{:05}.png", frame),
-                DisplayMode::Default,
-            );
+            if EXPORT_FRAMES {
+                image.dump(
+                    format!("animation/frame_{:05}.png", frame),
+                    DisplayMode::Denoise,
+                );
+            }
 
             let elapsed_s = start_time.elapsed().as_secs() as f32;
             let complete = frame as f32 / TOTAL_FRAMES as f32;
@@ -142,24 +157,78 @@ fn render<B: 'static + material::Background>(
     let cpus = num_cpus::get() as i32;
     let cpus = (cpus - 2).max(1);
 
-    let mut albedo_buf = FloatBuffer::new(image.width, image.height);
-    let mut normal_buf = FloatBuffer::new(image.width, image.height);
+    let albedo_buf = Arc::new(Mutex::new(FloatBuffer::new(image.width, image.height)));
+    let normal_buf = Arc::new(Mutex::new(FloatBuffer::new(image.width, image.height)));
+    let row = Arc::new(AtomicU32::new(0));
 
-    for y in 0..image.height {
-        for x in 0..image.width {
-            let u = (x as f32) / ((image.width - 1) as f32);
-            let v = (y as f32) / ((image.height - 1) as f32);
-            let ray = camera.ray(u, v);
-            let (albedo, normal) = camera.albedo_normal(&*world, ray);
+    let mut handles = Vec::new();
+    for i in 0..cpus {
+        let builder = std::thread::Builder::new()
+            .name(format!("pre-render:{}", i))
+            .stack_size(32 * 1024 * 1024);
 
-            albedo_buf.set((x, y), albedo);
-            normal_buf.set((x, y), normal);
-        }
+        let mut albedo_pixels = Vec::with_capacity(image.width as usize);
+        let mut normal_pixels = Vec::with_capacity(image.width as usize);
+
+        let world = world.clone();
+        let camera = camera.clone();
+        let image = image.clone();
+        let albedo_buf = albedo_buf.clone();
+        let normal_buf = normal_buf.clone();
+        let row = row.clone();
+
+        let handle = builder
+            .spawn(move || {
+                let mut y = row.fetch_add(1, AtomicOrdering::Acquire);
+                while y < image.height {
+                    albedo_pixels.clear();
+                    normal_pixels.clear();
+                    for x in 0..image.width {
+                        let u = (x as f32) / ((image.width - 1) as f32);
+                        let v = (y as f32) / ((image.height - 1) as f32);
+                        let ray = camera.ray(u, v);
+                        let (albedo, normal) = camera.albedo_normal(&*world, ray);
+
+                        albedo_pixels.push(albedo);
+                        normal_pixels.push(normal);
+                    }
+
+                    albedo_buf
+                        .lock()
+                        .unwrap()
+                        .set_row(y, albedo_pixels.as_slice());
+                    normal_buf
+                        .lock()
+                        .unwrap()
+                        .set_row(y, normal_pixels.as_slice());
+                    y = row.fetch_add(1, AtomicOrdering::Acquire);
+                }
+            })
+            .expect("unable to spawn pre-render thread");
+
+        handles.push(handle);
     }
+
+    for handle in handles {
+        handle.join().unwrap();
+    }
+
+    let albedo_buf = Arc::try_unwrap(albedo_buf).unwrap().into_inner().unwrap();
+    let normal_buf = Arc::try_unwrap(normal_buf).unwrap().into_inner().unwrap();
 
     image.set_albedo(albedo_buf);
     image.set_normal(normal_buf);
 
+    if QUICK_PASS.load(AtomicOrdering::Relaxed) {
+        event_proxy
+            .lock()
+            .expect("Event proxy posioned")
+            .send_event(UserEvent::Update)
+            .expect("Unable to reach event loop");
+        return;
+    }
+
+    image.clear();
     let mut handles = Vec::new();
     for i in 0..cpus {
         let event_proxy = event_proxy.clone();
@@ -207,6 +276,10 @@ fn render<B: 'static + material::Background>(
                         .expect("Unable to reach event loop");
 
                     frame_limit.as_mut().map(|n| *n -= 1);
+
+                    if QUICK_PASS.load(AtomicOrdering::Relaxed) {
+                        return;
+                    }
                 }
             })
             .expect("Unable to spawn render thread");
@@ -219,7 +292,11 @@ fn render<B: 'static + material::Background>(
     }
 }
 
-fn run(event_loop: EventLoop<UserEvent>, image: Arc<Image>) -> ! {
+fn run(
+    event_loop: EventLoop<UserEvent>,
+    image: Arc<Image>,
+    input: Arc<Mutex<InputCollection>>,
+) -> ! {
     let window_size = PhysicalSize::new(IMAGE_WIDTH, IMAGE_HEIGHT);
 
     let window_builder = WindowBuilder::new()
@@ -239,12 +316,47 @@ fn run(event_loop: EventLoop<UserEvent>, image: Arc<Image>) -> ! {
     let vertex_buffer =
         glium::VertexBuffer::new(&display, &QUAD).expect("Unable to create vertex buffer");
 
-    let mut display_mode = DisplayMode::Default;
+    let mut display_mode = if QUICK_PASS.load(AtomicOrdering::Relaxed) {
+        DisplayMode::Albedo
+    } else {
+        DisplayMode::Default
+    };
     let event_proxy = event_loop.create_proxy();
 
     let mut texture = None;
 
+    let mut gilrs = gilrs::Gilrs::new().unwrap();
+
     event_loop.run(move |event, _window, control_flow| match event {
+        Event::MainEventsCleared => {
+            while let Some(event) = gilrs.next_event() {
+                match event {
+                    gilrs::Event {
+                        event: gilrs::EventType::AxisChanged(axis, value, _),
+                        ..
+                    } => {
+                        let value = if value.abs() < 0.15 { 0.0 } else { value };
+                        let mut input = input.lock().unwrap();
+                        input.set_axis(axis, value);
+                    }
+                    gilrs::Event {
+                        event: gilrs::EventType::ButtonPressed(button, _),
+                        ..
+                    } => {
+                        let mut input = input.lock().unwrap();
+                        input.set(Input::Button(button))
+                    }
+                    gilrs::Event {
+                        event: gilrs::EventType::ButtonReleased(button, _),
+                        ..
+                    } => {
+                        let mut input = input.lock().unwrap();
+                        input.unset(Input::Button(button))
+                    }
+                    _ => (),
+                }
+            }
+        }
         Event::UserEvent(UserEvent::Update) => {
             let image = image.clone();
             let event_proxy = event_proxy.clone();
@@ -295,50 +407,79 @@ fn run(event_loop: EventLoop<UserEvent>, image: Arc<Image>) -> ! {
                     ..
                 },
             ..
-        } => match key {
-            VirtualKeyCode::E => {
-                let path = format!(
-                    "./export/raytrace_{}.png",
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_else(|e| e.duration())
-                        .as_secs()
-                );
-                image.dump(&path, display_mode);
-                println!("Image saved to: {}", path);
+        } => {
+            let mut input = input.lock().unwrap();
+            input.unset(Input::Key(key));
+            match key {
+                VirtualKeyCode::E => {
+                    let path = format!(
+                        "./export/raytrace_{}.png",
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_else(|e| e.duration())
+                            .as_secs()
+                    );
+                    image.dump(&path, display_mode);
+                    println!("Image saved to: {}", path);
+                }
+                VirtualKeyCode::Key1 => {
+                    display_mode = DisplayMode::Default;
+                    event_proxy
+                        .send_event(UserEvent::Update)
+                        .expect("Unable to reach event loop");
+                }
+                VirtualKeyCode::Key2 => {
+                    display_mode = DisplayMode::Denoise;
+                    event_proxy
+                        .send_event(UserEvent::Update)
+                        .expect("Unable to reach event loop");
+                }
+                VirtualKeyCode::Key3 => {
+                    display_mode = DisplayMode::Depth;
+                    event_proxy
+                        .send_event(UserEvent::Update)
+                        .expect("Unable to reach event loop");
+                }
+                VirtualKeyCode::Key4 => {
+                    display_mode = DisplayMode::Albedo;
+                    event_proxy
+                        .send_event(UserEvent::Update)
+                        .expect("Unable to reach event loop");
+                }
+                VirtualKeyCode::Key5 => {
+                    display_mode = DisplayMode::Normal;
+                    event_proxy
+                        .send_event(UserEvent::Update)
+                        .expect("Unable to reach event loop");
+                }
+                VirtualKeyCode::Grave => {
+                    let old_val = QUICK_PASS.fetch_xor(true, AtomicOrdering::Relaxed);
+                    if !old_val {
+                        display_mode = DisplayMode::Albedo;
+                        event_proxy
+                            .send_event(UserEvent::Update)
+                            .expect("Unable to reach event loop");
+                    }
+                }
+                _ => (),
             }
-            VirtualKeyCode::Key1 => {
-                display_mode = DisplayMode::Default;
-                event_proxy
-                    .send_event(UserEvent::Update)
-                    .expect("Unable to reach event loop");
-            }
-            VirtualKeyCode::Key2 => {
-                display_mode = DisplayMode::Denoise;
-                event_proxy
-                    .send_event(UserEvent::Update)
-                    .expect("Unable to reach event loop");
-            }
-            VirtualKeyCode::Key3 => {
-                display_mode = DisplayMode::Depth;
-                event_proxy
-                    .send_event(UserEvent::Update)
-                    .expect("Unable to reach event loop");
-            }
-            VirtualKeyCode::Key4 => {
-                display_mode = DisplayMode::Albedo;
-                event_proxy
-                    .send_event(UserEvent::Update)
-                    .expect("Unable to reach event loop");
-            }
-            VirtualKeyCode::Key5 => {
-                display_mode = DisplayMode::Normal;
-                event_proxy
-                    .send_event(UserEvent::Update)
-                    .expect("Unable to reach event loop");
-            }
-            _ => (),
-        },
+        }
+        Event::WindowEvent {
+            event:
+                WindowEvent::KeyboardInput {
+                    input:
+                        KeyboardInput {
+                            virtual_keycode: Some(key),
+                            state: winit::event::ElementState::Pressed,
+                            ..
+                        },
+                    ..
+                },
+            ..
+        } => {
+            let mut input = input.lock().unwrap();
+            input.set(Input::Key(key))
+        }
         Event::RedrawRequested(_) => {
             if let Some(texture) = texture.as_ref() {
                 let mut frame = display.draw();
@@ -366,7 +507,47 @@ fn run(event_loop: EventLoop<UserEvent>, image: Arc<Image>) -> ! {
     });
 }
 
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
+pub enum Input {
+    Key(winit::event::VirtualKeyCode),
+    Button(gilrs::Button),
+}
+
+pub struct InputCollection {
+    pressed_input: HashSet<Input>,
+    axis_values: HashMap<gilrs::Axis, f32>,
+}
+
+impl InputCollection {
+    fn new() -> Self {
+        Self {
+            pressed_input: HashSet::new(),
+            axis_values: HashMap::new(),
+        }
+    }
+
+    pub fn set(&mut self, key: Input) {
+        self.pressed_input.insert(key);
+    }
+
+    pub fn unset(&mut self, key: Input) {
+        self.pressed_input.remove(&key);
+    }
+
+    pub fn set_axis(&mut self, axis: gilrs::Axis, value: f32) {
+        self.axis_values.insert(axis, value);
+    }
+
+    pub fn is_pressed(&self, key: Input) -> bool {
+        self.pressed_input.contains(&key)
+    }
+
+    pub fn axis(&self, axis: gilrs::Axis) -> f32 {
+        *self.axis_values.get(&axis).unwrap_or(&0.0)
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
 enum DisplayMode {
     Default,
     Denoise,
@@ -375,6 +556,7 @@ enum DisplayMode {
     Normal,
 }
 
+#[derive(Debug, Clone)]
 struct FloatBuffer {
     pixels: Vec<f32>,
     width: u32,
@@ -395,6 +577,12 @@ impl FloatBuffer {
         self.pixels[index + 0] = color.x();
         self.pixels[index + 1] = color.y();
         self.pixels[index + 2] = color.z();
+    }
+
+    fn set_row(&mut self, row: u32, pixels: &[V3]) {
+        for (column, &color) in pixels.iter().enumerate().take(self.width as usize) {
+            self.set((column as u32, row), color);
+        }
     }
 
     fn as_slice(&self) -> &[f32] {
@@ -467,89 +655,86 @@ impl Image {
 
     fn to_rgb_bytes(&self, mode: DisplayMode) -> Vec<u8> {
         let pixels = self.pixels.lock().unwrap();
-        if pixels.0 == 0 {
-            let mut pixel_bytes = Vec::with_capacity(pixels.1.len() * 3);
-            for _ in 0..pixels.1.len() {
-                pixel_bytes.push(0);
-                pixel_bytes.push(0);
-                pixel_bytes.push(0);
+        let scale = 1.0 / pixels.0 as f32;
+        let component = |f_c: f32| ((scale * f_c).powf(1.0 / 2.2).min(1.0).max(0.0));
+        let mut pixel_floats = Vec::with_capacity(pixels.1.len() * 3);
+
+        let pixel_floats = match mode {
+            DisplayMode::Depth | DisplayMode::Default | DisplayMode::Denoise if pixels.0 == 0 => {
+                for _ in 0..pixels.1.len() {
+                    pixel_floats.push(0.0);
+                    pixel_floats.push(0.0);
+                    pixel_floats.push(0.0);
+                }
+                pixel_floats
             }
-            pixel_bytes
-        } else {
-            let scale = 1.0 / pixels.0 as f32;
-            let component = |f_c: f32| ((scale * f_c).powf(1.0 / 2.2).min(1.0).max(0.0));
-            let mut pixel_floats = Vec::with_capacity(pixels.1.len() * 3);
-
-            let pixel_floats = match mode {
-                DisplayMode::Depth => {
-                    let max_depth = pixels.1.iter().map(|p| p.1).max().unwrap_or(1).max(1);
-                    let max_depth = max_depth as f32 * scale;
-                    for (_color, depth) in pixels.1.iter() {
-                        let depth =
-                            (((*depth as f32 * scale) / max_depth).max(0.0).min(1.0)) as f32;
-                        pixel_floats.push(depth);
-                        pixel_floats.push(depth);
-                        pixel_floats.push(depth);
-                    }
-
-                    pixel_floats
+            DisplayMode::Depth => {
+                let max_depth = pixels.1.iter().map(|p| p.1).max().unwrap_or(1).max(1);
+                let max_depth = max_depth as f32 * scale;
+                for (_color, depth) in pixels.1.iter() {
+                    let depth = (((*depth as f32 * scale) / max_depth).max(0.0).min(1.0)) as f32;
+                    pixel_floats.push(depth);
+                    pixel_floats.push(depth);
+                    pixel_floats.push(depth);
                 }
-                DisplayMode::Default => {
-                    for (color, _depth) in pixels.1.iter() {
-                        pixel_floats.push(component(color.x()));
-                        pixel_floats.push(component(color.y()));
-                        pixel_floats.push(component(color.z()));
-                    }
-                    pixel_floats
-                }
-                DisplayMode::Denoise => {
-                    for (color, _depth) in pixels.1.iter() {
-                        pixel_floats.push(component(color.x()));
-                        pixel_floats.push(component(color.y()));
-                        pixel_floats.push(component(color.z()));
-                    }
-                    self.denoise(&mut pixel_floats);
-                    pixel_floats
-                }
-                DisplayMode::Albedo => {
-                    let albedo = self.albedo.lock();
-                    if let Ok(Some(albedo)) = albedo.as_deref() {
-                        for p in albedo.as_slice() {
-                            pixel_floats.push(p.min(1.0).max(0.0).powf(1.0 / 2.2));
-                        }
-                    } else {
-                        for _ in 0..pixels.1.len() {
-                            pixel_floats.push(0.0);
-                            pixel_floats.push(0.0);
-                            pixel_floats.push(0.0);
-                        }
-                    }
 
-                    pixel_floats
+                pixel_floats
+            }
+            DisplayMode::Default => {
+                for (color, _depth) in pixels.1.iter() {
+                    pixel_floats.push(component(color.x()));
+                    pixel_floats.push(component(color.y()));
+                    pixel_floats.push(component(color.z()));
                 }
-                DisplayMode::Normal => {
-                    let normal = self.normal.lock();
-                    if let Ok(Some(normal)) = normal.as_deref() {
-                        for p in normal.as_slice() {
-                            pixel_floats.push((p + 1.0) / 2.0);
-                        }
-                    } else {
-                        for _ in 0..pixels.1.len() {
-                            pixel_floats.push(0.0);
-                            pixel_floats.push(0.0);
-                            pixel_floats.push(0.0);
-                        }
+                pixel_floats
+            }
+            DisplayMode::Denoise => {
+                for (color, _depth) in pixels.1.iter() {
+                    pixel_floats.push(component(color.x()));
+                    pixel_floats.push(component(color.y()));
+                    pixel_floats.push(component(color.z()));
+                }
+                self.denoise(&mut pixel_floats);
+                pixel_floats
+            }
+            DisplayMode::Albedo => {
+                let albedo = self.albedo.lock();
+                if let Ok(Some(albedo)) = albedo.as_deref() {
+                    for p in albedo.as_slice() {
+                        pixel_floats.push(p.min(1.0).max(0.0).powf(1.0 / 2.2));
                     }
-
-                    pixel_floats
+                } else {
+                    for _ in 0..pixels.1.len() {
+                        pixel_floats.push(0.0);
+                        pixel_floats.push(0.0);
+                        pixel_floats.push(0.0);
+                    }
                 }
-            };
 
-            pixel_floats
-                .into_iter()
-                .map(|p| (p * 255.0) as u8)
-                .collect()
-        }
+                pixel_floats
+            }
+            DisplayMode::Normal => {
+                let normal = self.normal.lock();
+                if let Ok(Some(normal)) = normal.as_deref() {
+                    for p in normal.as_slice() {
+                        pixel_floats.push((p + 1.0) / 2.0);
+                    }
+                } else {
+                    for _ in 0..pixels.1.len() {
+                        pixel_floats.push(0.0);
+                        pixel_floats.push(0.0);
+                        pixel_floats.push(0.0);
+                    }
+                }
+
+                pixel_floats
+            }
+        };
+
+        pixel_floats
+            .into_iter()
+            .map(|p| (p * 255.0) as u8)
+            .collect()
     }
 
     #[cfg(feature = "denoise")]
@@ -575,7 +760,7 @@ impl Image {
     }
 
     #[cfg(not(feature = "denoise"))]
-    fn denoise(&self, pixels: &mut [f32]) {}
+    fn denoise(&self, _pixels: &mut [f32]) {}
 
     fn clear(&self) {
         let mut pixels = self.pixels.lock().unwrap();

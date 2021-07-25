@@ -21,13 +21,19 @@ pub trait Material: Send + Sync {
         None
     }
 
-    fn alpha_test(&self, uv: V2) -> bool {
+    fn alpha_test(&self, _uv: V2) -> bool {
         true
     }
 }
 
 pub trait Background: Send + Sync {
     fn background(&self, ray: Ray) -> V3;
+}
+
+impl<B: Background + ?Sized> Background for Box<B> {
+    fn background(&self, ray: Ray) -> V3 {
+        B::background(self, ray)
+    }
 }
 
 pub struct SolidBackground {

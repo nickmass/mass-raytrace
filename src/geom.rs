@@ -424,12 +424,14 @@ impl<M: Material> Intersect for Instance<M> {
     }
 }
 
+#[derive(Copy, Clone, Debug)]
 struct UV {
     uv_a: V2,
     uv_b: V2,
     uv_c: V2,
 }
 
+#[derive(Clone)]
 pub struct Triangle<M: Material> {
     vertex_a: V3,
     vertex_b: V3,
@@ -491,6 +493,10 @@ impl<M: Material> Triangle<M> {
             tangent,
             bitangent,
         }
+    }
+
+    pub fn vertices(&self) -> (V3, V3, V3) {
+        (self.vertex_a, self.vertex_b, self.vertex_c)
     }
 }
 

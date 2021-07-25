@@ -77,20 +77,10 @@ impl V3 {
     }
 
     pub fn cross(&self, other: Self) -> Self {
-        /*
-
-        // Crashes current nightly see: https://github.com/rust-lang/rust/issues/86893
-
         let x0: Fx4 = shuffle!(self.inner, [1, 2, 0, 3]);
         let x1: Fx4 = shuffle!(self.inner, [2, 0, 1, 3]);
         let y0: Fx4 = shuffle!(other.inner, [2, 0, 1, 3]);
         let y1: Fx4 = shuffle!(other.inner, [1, 2, 0, 3]);
-         */
-
-        let x0: Fx4 = self.inner.shuffle1_dyn([1, 2, 0, 3].into());
-        let x1: Fx4 = self.inner.shuffle1_dyn([2, 0, 1, 3].into());
-        let y0: Fx4 = other.inner.shuffle1_dyn([2, 0, 1, 3].into());
-        let y1: Fx4 = other.inner.shuffle1_dyn([1, 2, 0, 3].into());
 
         Self {
             inner: (x0 * y0) - (x1 * y1),

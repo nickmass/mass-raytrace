@@ -1,16 +1,11 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use super::material::{
-    Background, CubeMap, Dielectric, Lambertian, Material, Metal, Mix, Specular,
-};
-
+use crate::material::{Background, CubeMap, Lambertian, Material, Mix, Specular};
+use crate::math::{V2, V3};
 use crate::obj_loader::ObjGroupFilter;
+use crate::texture::{BlendMode, TextureBlend};
 use crate::texture::{SolidColor, Surface, Texture, WrapMode, YCbCrTexture};
-use crate::{
-    math::{V2, V3},
-    texture::{BlendMode, TextureBlend},
-};
 
 pub struct EveFilter;
 
@@ -90,37 +85,6 @@ impl EveMaterial {
         let glow = pixel.w();
 
         (paint, material, dirt, glow)
-    }
-
-    pub fn dump_normals<P: AsRef<Path>>(&self, path: P) {
-        let path = path.as_ref();
-
-        let mut pixels = Vec::new();
-        for y in 0..self.inner.normal_occlusion.height() {
-            for x in 0..self.inner.normal_occlusion.width() {
-                let uv = V2::new(
-                    x as f32 / (self.inner.normal_occlusion.width() - 1) as f32,
-                    y as f32 / (self.inner.normal_occlusion.height() - 1) as f32,
-                );
-                let (norm, _occ) = self.normal_occlusion(uv);
-
-                let norm = ((norm + 1.0) / 2.0) * 255.0;
-
-                pixels.push(norm.x() as u8);
-                pixels.push(norm.y() as u8);
-                pixels.push(norm.z() as u8);
-            }
-        }
-
-        image::save_buffer_with_format(
-            path,
-            &pixels,
-            self.inner.normal_occlusion.width(),
-            self.inner.normal_occlusion.height(),
-            image::ColorType::Rgb8,
-            image::ImageFormat::Png,
-        )
-        .unwrap();
     }
 }
 

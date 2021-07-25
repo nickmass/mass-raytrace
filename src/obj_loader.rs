@@ -5,6 +5,11 @@ use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::geom::Triangle;
+use crate::material::Lambertian;
+use crate::math::{V2, V3};
+use crate::texture::{SharedTexture, SolidColor, Surface, Texture, WrapMode};
+
 pub trait ObjGroupFilter {
     fn include_group(&self, group_name: Option<&str>) -> bool;
 }
@@ -21,10 +26,10 @@ pub trait ObjBuilder {
     type Texture: Copy;
     type Face;
     type Error: std::error::Error + 'static;
-    fn include_group(&mut self, context: &ObjContext) -> bool {
+    fn include_group(&mut self, _context: &ObjContext) -> bool {
         true
     }
-    fn load_materials(&mut self, context: &ObjContext) {}
+    fn load_materials(&mut self, _context: &ObjContext) {}
     fn build_vertex(&mut self, context: &ObjContext, x: f32, y: f32, z: f32) -> Self::Vertex;
     fn build_normal(&mut self, context: &ObjContext, x: f32, y: f32, z: f32) -> Self::Normal;
     fn build_uv(&mut self, context: &ObjContext, x: f32, y: f32) -> Self::Texture;
@@ -152,11 +157,6 @@ where
         }
     }
 }
-
-use crate::geom::Triangle;
-use crate::material::{Lambertian, Metal};
-use crate::math::{V2, V3};
-use crate::texture::{SharedTexture, SolidColor, Surface, Texture, WrapMode};
 pub struct SimpleTexturedBuilder {
     textures: HashMap<String, SharedTexture>,
     diffuse: HashMap<String, V3>,
