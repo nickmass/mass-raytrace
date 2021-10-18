@@ -1,5 +1,6 @@
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use gilrs::{Axis, Button};
+use lazy_static::lazy_static;
 use libsm64::{LevelTriangle, MarioInput};
 use winit::event::VirtualKeyCode;
 
@@ -16,7 +17,13 @@ use std::io::Cursor;
 use std::sync::Arc;
 
 const COLLISION_LEVEL_SCALE: f32 = 1000.0;
-static mut SM64: Option<libsm64::Sm64> = None;
+
+lazy_static! {
+    static ref SM64: libsm64::Sm64 = {
+        let rom = std::fs::File::open(std::env::var("SM64_ROM_PATH").unwrap()).unwrap();
+        libsm64::Sm64::new(rom).unwrap()
+    };
+}
 
 pub struct Mario {
     aspect_ratio: f32,
@@ -24,29 +31,17 @@ pub struct Mario {
     write_input: bool,
     input_buf: Cursor<Vec<u8>>,
     output_buf: Vec<u8>,
+    platform: libsm64::DynamicSurface<'static>,
     handle: libsm64::Mario<'static>,
     last_pos: V3,
     texture: SharedTexture,
-    platform: libsm64::DynamicSurface<'static>,
     castle_triangles: Vec<Triangle<Lambertian<Arc<dyn Surface>>>>,
     platform_triangles: Vec<Triangle<()>>,
     sky_texture: SharedTexture,
 }
 
-fn sm64() -> &'static libsm64::Sm64 {
-    unsafe {
-        if SM64.is_none() {
-            let rom = std::fs::File::open(std::env::var("SM64_ROM_PATH").unwrap()).unwrap();
-            SM64 = Some(libsm64::Sm64::new(rom).unwrap());
-        }
-        SM64.as_ref().unwrap()
-    }
-}
-
 impl Mario {
     pub fn new(aspect_ratio: f32, read_input: bool, write_input: bool) -> Self {
-        let sm64 = sm64();
-
         let input_buf = if read_input {
             std::fs::read("models/mario/record_input.bin").unwrap()
         } else {
@@ -56,7 +51,7 @@ impl Mario {
         let input_buf = Cursor::new(input_buf);
         let output_buf = Vec::new();
 
-        let texture = sm64.texture();
+        let texture = SM64.texture();
         let texture =
             Texture::load_bytes(texture.data, texture.width, texture.height, WrapMode::Clamp)
                 .shared();
@@ -70,7 +65,7 @@ impl Mario {
             .map(|triangle| create_level_triangle(triangle, castle_scale, false))
             .collect::<Vec<_>>();
 
-        sm64.load_level_geometry(castle_geo.as_slice());
+        SM64.load_level_geometry(castle_geo.as_slice());
 
         let platform_triangles =
             PlyLoader::load("cube.ply", V3::new, |a, b, c| Triangle::new((), a, b, c)).unwrap();
@@ -93,9 +88,9 @@ impl Mario {
                 z: 0.0,
             },
         };
-        let platform = sm64.create_dynamic_surface(&*platform_geo, platform_transform);
+        let platform = SM64.create_dynamic_surface(&*platform_geo, platform_transform);
 
-        let handle = sm64.create_mario(1100, 100, -4310).unwrap();
+        let handle = SM64.create_mario(1100, 100, -4310).unwrap();
 
         let sky_texture = Texture::load_png("models/mario/mario_sky.png", WrapMode::Clamp)
             .unwrap()
@@ -121,7 +116,8 @@ impl Mario {
 impl Drop for Mario {
     fn drop(&mut self) {
         if self.write_input {
-            std::fs::write("models/mario/record_input.bin", self.input_buf.get_ref()).unwrap();
+            println!("Writing output buf");
+            std::fs::write("models/mario/record_input.bin", &self.output_buf).unwrap();
         }
     }
 }

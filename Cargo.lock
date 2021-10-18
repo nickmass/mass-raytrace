@@ -892,7 +892,7 @@ checksum = "7fc7aa29613bd6a620df431842069224d8bc9011086b1db4c0e0cd47fa03ec9a"
 [[package]]
 name = "libsm64"
 version = "0.1.0"
-source = "git+https://github.com/nickmass/libsm64-rust.git#37299b488c6c2c6ff4301ab0bc5df0d93db3cc62"
+source = "git+https://github.com/nickmass/libsm64-rust.git#00f692e583e710b9b9cd7201b7bb3abd1b55af58"
 dependencies = [
  "libsm64-sys",
  "sha",
@@ -901,7 +901,7 @@ dependencies = [
 [[package]]
 name = "libsm64-sys"
 version = "0.1.0"
-source = "git+https://github.com/nickmass/libsm64-rust.git#37299b488c6c2c6ff4301ab0bc5df0d93db3cc62"
+source = "git+https://github.com/nickmass/libsm64-rust.git#00f692e583e710b9b9cd7201b7bb3abd1b55af58"
 dependencies = [
  "bindgen",
  "cc",
@@ -962,6 +962,7 @@ dependencies = [
  "gilrs",
  "glium",
  "image",
+ "lazy_static",
  "libsm64",
  "num_cpus",
  "oidn",
@@ -1265,9 +1266,9 @@ dependencies = [
 
 [[package]]
 name = "packed_simd_2"
-version = "0.3.5"
+version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e64858a2d3733fdd61adfdd6da89aa202f7ff0e741d2fc7ed1e452ba9dc99d7"
+checksum = "71c0c06716cfc81616fa8e22b721ce92fecd594508bc0eb3d04ae3ef35ac10c5"
 dependencies = [
  "cfg-if 0.1.10",
  "libm",

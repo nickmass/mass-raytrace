@@ -389,6 +389,7 @@ fn run(
             eprintln!("Render thread panic");
             *control_flow = ControlFlow::Exit;
         }
+        Event::UserEvent(UserEvent::Complete) => println!("Render Complete"),
         Event::WindowEvent {
             event: WindowEvent::CloseRequested,
             ..
@@ -410,6 +411,7 @@ fn run(
         } => {
             let mut input = input.lock().unwrap();
             input.unset(Input::Key(key));
+            let initial_display_mode = display_mode;
             match key {
                 VirtualKeyCode::E => {
                     let path = format!(
@@ -422,46 +424,26 @@ fn run(
                     image.dump(&path, display_mode);
                     println!("Image saved to: {}", path);
                 }
-                VirtualKeyCode::Key1 => {
-                    display_mode = DisplayMode::Default;
-                    event_proxy
-                        .send_event(UserEvent::Update)
-                        .expect("Unable to reach event loop");
-                }
-                VirtualKeyCode::Key2 => {
-                    display_mode = DisplayMode::Denoise;
-                    event_proxy
-                        .send_event(UserEvent::Update)
-                        .expect("Unable to reach event loop");
-                }
-                VirtualKeyCode::Key3 => {
-                    display_mode = DisplayMode::Depth;
-                    event_proxy
-                        .send_event(UserEvent::Update)
-                        .expect("Unable to reach event loop");
-                }
-                VirtualKeyCode::Key4 => {
-                    display_mode = DisplayMode::Albedo;
-                    event_proxy
-                        .send_event(UserEvent::Update)
-                        .expect("Unable to reach event loop");
-                }
-                VirtualKeyCode::Key5 => {
-                    display_mode = DisplayMode::Normal;
-                    event_proxy
-                        .send_event(UserEvent::Update)
-                        .expect("Unable to reach event loop");
-                }
+                VirtualKeyCode::Key1 => display_mode = DisplayMode::Default,
+                VirtualKeyCode::Key2 => display_mode = DisplayMode::Denoise,
+                VirtualKeyCode::Key3 => display_mode = DisplayMode::Depth,
+                VirtualKeyCode::Key4 => display_mode = DisplayMode::Albedo,
+                VirtualKeyCode::Key5 => display_mode = DisplayMode::Normal,
                 VirtualKeyCode::Grave => {
                     let old_val = QUICK_PASS.fetch_xor(true, AtomicOrdering::Relaxed);
                     if !old_val {
                         display_mode = DisplayMode::Albedo;
-                        event_proxy
-                            .send_event(UserEvent::Update)
-                            .expect("Unable to reach event loop");
+                    } else {
+                        display_mode = DisplayMode::Default;
                     }
                 }
                 _ => (),
+            }
+
+            if display_mode != initial_display_mode {
+                event_proxy
+                    .send_event(UserEvent::Update)
+                    .expect("Unable to reach event loop");
             }
         }
         Event::WindowEvent {
