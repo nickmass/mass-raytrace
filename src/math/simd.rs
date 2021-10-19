@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use packed_simd::{f32x2, f32x4, shuffle};
+use core_simd::{f32x2, f32x4, simd_swizzle};
 
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
@@ -16,7 +16,7 @@ pub struct V2 {
 impl V2 {
     pub const fn new(x: F, y: F) -> Self {
         Self {
-            inner: Fx2::new(x, y),
+            inner: Fx2::from_array([x, y]),
         }
     }
 
@@ -28,12 +28,12 @@ impl V2 {
 
     #[inline(always)]
     pub fn x(&self) -> F {
-        unsafe { self.inner.extract_unchecked(0) }
+        self.inner.as_array()[0]
     }
 
     #[inline(always)]
     pub fn y(&self) -> F {
-        unsafe { self.inner.extract_unchecked(1) }
+        self.inner.as_array()[1]
     }
 }
 
@@ -45,7 +45,7 @@ pub struct V3 {
 impl V3 {
     pub const fn new(x: F, y: F, z: F) -> Self {
         Self {
-            inner: Fx4::new(x, y, z, 1.0),
+            inner: Fx4::from_array([x, y, z, 1.0]),
         }
     }
 
@@ -57,30 +57,30 @@ impl V3 {
 
     #[inline(always)]
     pub fn x(&self) -> F {
-        unsafe { self.inner.extract_unchecked(0) }
+        self.inner.as_array()[0]
     }
 
     #[inline(always)]
     pub fn y(&self) -> F {
-        unsafe { self.inner.extract_unchecked(1) }
+        self.inner.as_array()[1]
     }
 
     #[inline(always)]
     pub fn z(&self) -> F {
-        unsafe { self.inner.extract_unchecked(2) }
+        self.inner.as_array()[2]
     }
 
     pub fn dot(&self, other: Self) -> F {
-        let x = self.inner * other.inner;
-        let x = unsafe { x.replace_unchecked(3, 0.0) };
-        x.sum()
+        let mut x = self.inner * other.inner;
+        x.as_mut_array()[3] = 0.0;
+        x.horizontal_sum()
     }
 
     pub fn cross(&self, other: Self) -> Self {
-        let x0: Fx4 = shuffle!(self.inner, [1, 2, 0, 3]);
-        let x1: Fx4 = shuffle!(self.inner, [2, 0, 1, 3]);
-        let y0: Fx4 = shuffle!(other.inner, [2, 0, 1, 3]);
-        let y1: Fx4 = shuffle!(other.inner, [1, 2, 0, 3]);
+        let x0: Fx4 = simd_swizzle!(self.inner, [1, 2, 0, 3]);
+        let x1: Fx4 = simd_swizzle!(self.inner, [2, 0, 1, 3]);
+        let y0: Fx4 = simd_swizzle!(other.inner, [2, 0, 1, 3]);
+        let y1: Fx4 = simd_swizzle!(other.inner, [1, 2, 0, 3]);
 
         Self {
             inner: (x0 * y0) - (x1 * y1),
@@ -100,9 +100,16 @@ impl V3 {
     }
 
     pub fn powf(&self, pow: F) -> Self {
-        Self {
-            inner: self.inner.powf(Self::fill(pow).inner),
-        }
+        let v = self.inner.to_array();
+
+        let inner = Fx4::from_array([
+            v[0].powf(pow),
+            v[1].powf(pow),
+            v[2].powf(pow),
+            v[3].powf(pow),
+        ]);
+
+        Self { inner }
     }
 
     pub fn abs(&self) -> Self {
@@ -120,7 +127,7 @@ pub struct V4 {
 impl V4 {
     pub const fn new(x: F, y: F, z: F, w: F) -> Self {
         Self {
-            inner: Fx4::new(x, y, z, w),
+            inner: Fx4::from_array([x, y, z, w]),
         }
     }
 
@@ -132,22 +139,22 @@ impl V4 {
 
     #[inline(always)]
     pub fn x(&self) -> F {
-        unsafe { self.inner.extract_unchecked(0) }
+        self.inner.as_array()[0]
     }
 
     #[inline(always)]
     pub fn y(&self) -> F {
-        unsafe { self.inner.extract_unchecked(1) }
+        self.inner.as_array()[1]
     }
 
     #[inline(always)]
     pub fn z(&self) -> F {
-        unsafe { self.inner.extract_unchecked(2) }
+        self.inner.as_array()[2]
     }
 
     #[inline(always)]
     pub fn w(&self) -> F {
-        unsafe { self.inner.extract_unchecked(3) }
+        self.inner.as_array()[3]
     }
 
     pub fn min(&self, other: Self) -> Self {
@@ -335,31 +342,31 @@ impl Mul for M4 {
     fn mul(self, rhs: Self) -> Self::Output {
         let m = self.transpose();
 
-        let c00 = (m.c0 * rhs.c0).sum();
-        let c01 = (m.c1 * rhs.c0).sum();
-        let c02 = (m.c2 * rhs.c0).sum();
-        let c03 = (m.c3 * rhs.c0).sum();
+        let c00 = (m.c0 * rhs.c0).horizontal_sum();
+        let c01 = (m.c1 * rhs.c0).horizontal_sum();
+        let c02 = (m.c2 * rhs.c0).horizontal_sum();
+        let c03 = (m.c3 * rhs.c0).horizontal_sum();
 
-        let c10 = (m.c0 * rhs.c1).sum();
-        let c11 = (m.c1 * rhs.c1).sum();
-        let c12 = (m.c2 * rhs.c1).sum();
-        let c13 = (m.c3 * rhs.c1).sum();
+        let c10 = (m.c0 * rhs.c1).horizontal_sum();
+        let c11 = (m.c1 * rhs.c1).horizontal_sum();
+        let c12 = (m.c2 * rhs.c1).horizontal_sum();
+        let c13 = (m.c3 * rhs.c1).horizontal_sum();
 
-        let c20 = (m.c0 * rhs.c2).sum();
-        let c21 = (m.c1 * rhs.c2).sum();
-        let c22 = (m.c2 * rhs.c2).sum();
-        let c23 = (m.c3 * rhs.c2).sum();
+        let c20 = (m.c0 * rhs.c2).horizontal_sum();
+        let c21 = (m.c1 * rhs.c2).horizontal_sum();
+        let c22 = (m.c2 * rhs.c2).horizontal_sum();
+        let c23 = (m.c3 * rhs.c2).horizontal_sum();
 
-        let c30 = (m.c0 * rhs.c3).sum();
-        let c31 = (m.c1 * rhs.c3).sum();
-        let c32 = (m.c2 * rhs.c3).sum();
-        let c33 = (m.c3 * rhs.c3).sum();
+        let c30 = (m.c0 * rhs.c3).horizontal_sum();
+        let c31 = (m.c1 * rhs.c3).horizontal_sum();
+        let c32 = (m.c2 * rhs.c3).horizontal_sum();
+        let c33 = (m.c3 * rhs.c3).horizontal_sum();
 
         Self {
-            c0: Fx4::new(c00, c01, c02, c03),
-            c1: Fx4::new(c10, c11, c12, c13),
-            c2: Fx4::new(c20, c21, c22, c23),
-            c3: Fx4::new(c30, c31, c32, c33),
+            c0: Fx4::from_array([c00, c01, c02, c03]),
+            c1: Fx4::from_array([c10, c11, c12, c13]),
+            c2: Fx4::from_array([c20, c21, c22, c23]),
+            c3: Fx4::from_array([c30, c31, c32, c33]),
         }
     }
 }

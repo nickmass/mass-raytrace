@@ -1,3 +1,5 @@
+#![cfg_attr(feature = "simd", feature(portable_simd))]
+
 use glium::texture::SrgbTexture2d;
 use glium::{glutin, implement_vertex, uniform, DrawParameters, Program, Surface};
 use glutin::event_loop::EventLoopProxy;
