@@ -16,12 +16,11 @@ fastrand = "1.4.0"
 glium = "0.30"
 image = "0.23.12"
 num_cpus = "1.13.0"
-core_simd = { git = "https://github.com/rust-lang/portable-simd.git", rev = "5b4282edcd", optional = true }
+core_simd = { git = "https://github.com/rust-lang/portable-simd.git", optional = true }
 winit = "0.25"
 oidn = { version = "1.4.1", optional = true }
 libsm64 = { git = "https://github.com/nickmass/libsm64-rust.git" }
 gilrs = "0.8.1"
-lazy_static = "1.4.0"
 
 [profile.release]
 debug = 2

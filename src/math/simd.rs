@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use core_simd::{f32x2, f32x4, simd_swizzle};
+use core_simd::{f32x2, f32x4, simd_swizzle, SimdFloat};
 
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
@@ -14,12 +14,14 @@ pub struct V2 {
     inner: Fx2,
 }
 impl V2 {
+    #[inline(always)]
     pub const fn new(x: F, y: F) -> Self {
         Self {
             inner: Fx2::from_array([x, y]),
         }
     }
 
+    #[inline(always)]
     pub fn fill(v: F) -> Self {
         Self {
             inner: Fx2::splat(v),
@@ -43,12 +45,14 @@ pub struct V3 {
 }
 
 impl V3 {
+    #[inline(always)]
     pub const fn new(x: F, y: F, z: F) -> Self {
         Self {
             inner: Fx4::from_array([x, y, z, 1.0]),
         }
     }
 
+    #[inline(always)]
     pub fn fill(v: F) -> Self {
         Self {
             inner: Fx4::splat(v),
@@ -73,7 +77,7 @@ impl V3 {
     pub fn dot(&self, other: Self) -> F {
         let mut x = self.inner * other.inner;
         x.as_mut_array()[3] = 0.0;
-        x.horizontal_sum()
+        x.reduce_sum()
     }
 
     pub fn cross(&self, other: Self) -> Self {
@@ -89,13 +93,13 @@ impl V3 {
 
     pub fn min(&self, other: Self) -> Self {
         Self {
-            inner: self.inner.min(other.inner),
+            inner: self.inner.simd_min(other.inner),
         }
     }
 
     pub fn max(&self, other: Self) -> Self {
         Self {
-            inner: self.inner.max(other.inner),
+            inner: self.inner.simd_max(other.inner),
         }
     }
 
@@ -125,12 +129,14 @@ pub struct V4 {
 }
 
 impl V4 {
+    #[inline(always)]
     pub const fn new(x: F, y: F, z: F, w: F) -> Self {
         Self {
             inner: Fx4::from_array([x, y, z, w]),
         }
     }
 
+    #[inline(always)]
     pub fn fill(v: F) -> Self {
         Self {
             inner: Fx4::splat(v),
@@ -159,13 +165,13 @@ impl V4 {
 
     pub fn min(&self, other: Self) -> Self {
         Self {
-            inner: self.inner.min(other.inner),
+            inner: self.inner.simd_min(other.inner),
         }
     }
 
     pub fn max(&self, other: Self) -> Self {
         Self {
-            inner: self.inner.max(other.inner),
+            inner: self.inner.simd_max(other.inner),
         }
     }
 }
@@ -189,7 +195,7 @@ macro_rules! implement_vector {
             #[inline(always)]
             fn $func(self, other: F) -> Self::Output {
                 Self {
-                    inner: self.inner.$func(other),
+                    inner: self.inner.$func(Self::fill(other).inner),
                 }
             }
         }
@@ -200,7 +206,7 @@ macro_rules! implement_vector {
             #[inline(always)]
             fn $func(self, other: $name) -> Self::Output {
                 $name {
-                    inner: self.$func(other.inner),
+                    inner: $name::fill(self).inner.$func(other.inner),
                 }
             }
         }
@@ -215,7 +221,7 @@ macro_rules! implement_vector {
         impl $op_assign<F> for $name {
             #[inline(always)]
             fn $func_assign(&mut self, other: F) {
-                self.inner = self.inner.$func(other);
+                self.inner = self.inner.$func(Self::fill(other).inner);
             }
         }
     };
@@ -317,10 +323,10 @@ impl M4 {
     }
 
     fn transform(self, rhs: V3, w: F) -> V3 {
-        let vx = self.c0 * rhs.x();
-        let vy = self.c1 * rhs.y();
-        let vz = self.c2 * rhs.z();
-        let vw = self.c3 * w;
+        let vx = self.c0 * Fx4::splat(rhs.x());
+        let vy = self.c1 * Fx4::splat(rhs.y());
+        let vz = self.c2 * Fx4::splat(rhs.z());
+        let vw = self.c3 * Fx4::splat(w);
 
         let v = vx + vy + vz + vw;
 
@@ -342,25 +348,25 @@ impl Mul for M4 {
     fn mul(self, rhs: Self) -> Self::Output {
         let m = self.transpose();
 
-        let c00 = (m.c0 * rhs.c0).horizontal_sum();
-        let c01 = (m.c1 * rhs.c0).horizontal_sum();
-        let c02 = (m.c2 * rhs.c0).horizontal_sum();
-        let c03 = (m.c3 * rhs.c0).horizontal_sum();
+        let c00 = (m.c0 * rhs.c0).reduce_sum();
+        let c01 = (m.c1 * rhs.c0).reduce_sum();
+        let c02 = (m.c2 * rhs.c0).reduce_sum();
+        let c03 = (m.c3 * rhs.c0).reduce_sum();
 
-        let c10 = (m.c0 * rhs.c1).horizontal_sum();
-        let c11 = (m.c1 * rhs.c1).horizontal_sum();
-        let c12 = (m.c2 * rhs.c1).horizontal_sum();
-        let c13 = (m.c3 * rhs.c1).horizontal_sum();
+        let c10 = (m.c0 * rhs.c1).reduce_sum();
+        let c11 = (m.c1 * rhs.c1).reduce_sum();
+        let c12 = (m.c2 * rhs.c1).reduce_sum();
+        let c13 = (m.c3 * rhs.c1).reduce_sum();
 
-        let c20 = (m.c0 * rhs.c2).horizontal_sum();
-        let c21 = (m.c1 * rhs.c2).horizontal_sum();
-        let c22 = (m.c2 * rhs.c2).horizontal_sum();
-        let c23 = (m.c3 * rhs.c2).horizontal_sum();
+        let c20 = (m.c0 * rhs.c2).reduce_sum();
+        let c21 = (m.c1 * rhs.c2).reduce_sum();
+        let c22 = (m.c2 * rhs.c2).reduce_sum();
+        let c23 = (m.c3 * rhs.c2).reduce_sum();
 
-        let c30 = (m.c0 * rhs.c3).horizontal_sum();
-        let c31 = (m.c1 * rhs.c3).horizontal_sum();
-        let c32 = (m.c2 * rhs.c3).horizontal_sum();
-        let c33 = (m.c3 * rhs.c3).horizontal_sum();
+        let c30 = (m.c0 * rhs.c3).reduce_sum();
+        let c31 = (m.c1 * rhs.c3).reduce_sum();
+        let c32 = (m.c2 * rhs.c3).reduce_sum();
+        let c33 = (m.c3 * rhs.c3).reduce_sum();
 
         Self {
             c0: Fx4::from_array([c00, c01, c02, c03]),

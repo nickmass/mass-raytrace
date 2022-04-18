@@ -385,7 +385,7 @@ dependencies = [
 [[package]]
 name = "core_simd"
 version = "0.1.0"
-source = "git+https://github.com/rust-lang/portable-simd.git?rev=5b4282edcd#5b4282edcd01089df26e2e2c268c4dc1c361dd91"
+source = "git+https://github.com/rust-lang/portable-simd.git#9718639d61b32d4efd2fac330ab1058732b3b758"
 
 [[package]]
 name = "crc32fast"
@@ -890,17 +890,18 @@ dependencies = [
 
 [[package]]
 name = "libsm64"
-version = "0.1.0"
-source = "git+https://github.com/nickmass/libsm64-rust.git#00f692e583e710b9b9cd7201b7bb3abd1b55af58"
+version = "0.2.0"
+source = "git+https://github.com/nickmass/libsm64-rust.git#a078cfb91b2c22ceb94b73d31ba9a5bc7ea0179b"
 dependencies = [
  "libsm64-sys",
+ "once_cell",
  "sha",
 ]
 
 [[package]]
 name = "libsm64-sys"
 version = "0.1.0"
-source = "git+https://github.com/nickmass/libsm64-rust.git#00f692e583e710b9b9cd7201b7bb3abd1b55af58"
+source = "git+https://github.com/nickmass/libsm64-rust.git#a078cfb91b2c22ceb94b73d31ba9a5bc7ea0179b"
 dependencies = [
  "bindgen",
  "cc",
@@ -962,7 +963,6 @@ dependencies = [
  "gilrs",
  "glium",
  "image",
- "lazy_static",
  "libsm64",
  "num_cpus",
  "oidn",

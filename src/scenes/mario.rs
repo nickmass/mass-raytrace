@@ -1,7 +1,6 @@
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use gilrs::{Axis, Button};
-use lazy_static::lazy_static;
-use libsm64::{LevelTriangle, MarioInput};
+use libsm64::{DynamicSurface, LevelTriangle, MarioInput, Sm64};
 use winit::event::VirtualKeyCode;
 
 use crate::geom::{Model, Triangle};
@@ -18,21 +17,15 @@ use std::sync::Arc;
 
 const COLLISION_LEVEL_SCALE: f32 = 1000.0;
 
-lazy_static! {
-    static ref SM64: libsm64::Sm64 = {
-        let rom = std::fs::File::open(std::env::var("SM64_ROM_PATH").unwrap()).unwrap();
-        libsm64::Sm64::new(rom).unwrap()
-    };
-}
-
 pub struct Mario {
     aspect_ratio: f32,
     read_input: bool,
     write_input: bool,
     input_buf: Cursor<Vec<u8>>,
     output_buf: Vec<u8>,
-    platform: libsm64::DynamicSurface<'static>,
-    handle: libsm64::Mario<'static>,
+    sm64: Sm64,
+    platform: DynamicSurface,
+    handle: libsm64::Mario,
     last_pos: V3,
     texture: SharedTexture,
     castle_triangles: Vec<Triangle<Lambertian<Arc<dyn Surface>>>>,
@@ -51,7 +44,9 @@ impl Mario {
         let input_buf = Cursor::new(input_buf);
         let output_buf = Vec::new();
 
-        let texture = SM64.texture();
+        let rom = std::fs::File::open(std::env::var("SM64_ROM_PATH").unwrap()).unwrap();
+        let mut sm64 = Sm64::new(rom).unwrap();
+        let texture = sm64.texture();
         let texture =
             Texture::load_bytes(texture.data, texture.width, texture.height, WrapMode::Clamp)
                 .shared();
@@ -65,7 +60,7 @@ impl Mario {
             .map(|triangle| create_level_triangle(triangle, castle_scale, false))
             .collect::<Vec<_>>();
 
-        SM64.load_level_geometry(castle_geo.as_slice());
+        sm64.load_level_geometry(castle_geo.as_slice());
 
         let platform_triangles =
             PlyLoader::load("cube.ply", V3::new, |a, b, c| Triangle::new((), a, b, c)).unwrap();
@@ -88,9 +83,9 @@ impl Mario {
                 z: 0.0,
             },
         };
-        let platform = SM64.create_dynamic_surface(&*platform_geo, platform_transform);
+        let platform = sm64.create_dynamic_surface(&*platform_geo, platform_transform);
 
-        let handle = SM64.create_mario(1100, 100, -4310).unwrap();
+        let handle = sm64.create_mario(1100, 100, -4310).unwrap();
 
         let sky_texture = Texture::load_png("models/mario/mario_sky.png", WrapMode::Clamp)
             .unwrap()
@@ -103,6 +98,7 @@ impl Mario {
             input_buf,
             output_buf,
             handle,
+            sm64,
             last_pos: V3::zero(),
             texture,
             platform,
@@ -202,6 +198,8 @@ impl super::Scene for Mario {
         mario_input.cam_look_x = self.last_pos.x() - look_from.x();
         mario_input.cam_look_z = self.last_pos.z() - look_from.z();
 
+        let tex = self.texture.clone();
+
         let mario_state = self.handle.tick(mario_input);
         let scale = M4::scale(V3::fill(1.0 / COLLISION_LEVEL_SCALE));
 
@@ -217,8 +215,8 @@ impl super::Scene for Mario {
                     1.0,
                 );
 
-                let color = SolidColorFallback::new(color, self.texture.clone());
-                let material = Lambertian::new(color);
+                let m_color = SolidColorFallback::new(color, tex.clone());
+                let material = Lambertian::new(m_color);
 
                 let to_v3 = |point: libsm64::Point3<f32>| V3::new(point.x, point.y, point.z);
                 let to_v2 = |point: libsm64::Point2<f32>| V2::new(point.x, point.y);
